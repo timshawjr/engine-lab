@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "rules": [
+    "Each entry carries a 'source' URL. A profile may only be shown in the UI when every TOPS value in it has a non-empty source.",
+    "These are PEAK CALCULATED values (Intel calls them PTOPS - Peak Tera Operations Per Second). The QRG footnote states they are calculated from assumptions, not measured.",
+    "The HUD must render them with the word 'peak' and the source URL available in the operator overlay.",
+    "Prefer runtime-reported numbers where available: read DEVICE_GOPS from OpenVINO (ov::device::gops / 'DEVICE_GOPS') in a try/except and display it next to the peak spec when present.",
+    "Fill/verify the entry for the demo machine's actual SKU from Intel ARK before the show."
+  ],
+  "profiles": [
+    {
+      "id": "lunar-lake",
+      "match": [
+        "Core Ultra 200V",
+        "Core Ultra 2xxV",
+        "Lunar Lake",
+        "Xe2"
+      ],
+      "family": "Intel Core Ultra Series 2 (Lunar Lake, Core Ultra 200V)",
+      "npu_gen": "NPU 4 (NPU 4000, PCI 0x643E)",
+      "peak_tops": {
+        "npu": 48,
+        "gpu": 67,
+        "platform": 120
+      },
+      "source": "Intel Core Ultra Series 2 (Lunar Lake) launch materials / platform brief - verify per-SKU on Intel ARK before the show",
+      "note": "NPU TOPS = 48; Arc GPU = up to 67; platform total = up to 120."
+    },
+    {
+      "id": "arrow-lake",
+      "match": [
+        "Core Ultra 200S",
+        "Core Ultra 200H",
+        "Core Ultra 2xxH",
+        "Arrow Lake"
+      ],
+      "family": "Intel Core Ultra Series 2 (Arrow Lake)",
+      "npu_gen": "NPU 3 (NPU 3720, PCI 0xAD1D)",
+      "peak_tops": {
+        "npu": 13,
+        "gpu": null,
+        "platform": null
+      },
+      "source": "Intel Core Ultra desktop (Series 2) product brief - NPU 13 TOPS; verify GPU/platform on Intel ARK per SKU",
+      "note": "Same NPU silicon as Meteor Lake. Expect FEWER models to compile on the NPU than on Lunar Lake - the DeviceAvailability gate must handle that as a normal outcome, not an error."
+    },
+    {
+      "id": "panther-lake",
+      "match": [
+        "Core Ultra X",
+        "Core Ultra Series 3",
+        "Panther Lake",
+        "Core Ultra 3xx"
+      ],
+      "family": "Intel Core Ultra Series 3 (Panther Lake)",
+      "npu_gen": "NPU 5 (NPU 5010, PCI 0xB03E)",
+      "peak_tops": {
+        "npu": 50,
+        "gpu": 120,
+        "platform": 180
+      },
+      "source": "Intel Core Ultra Series 3 Quick Reference Guide v1 (cdrdv2-public.intel.com/871380) - 'NEW NPU with up to 50 TOPS', up to 12 Xe cores; Intel CES 2026 Core Ultra Series 3 launch press deck - up to 180 TOPS platform",
+      "note": "Per-SKU values differ (e.g. a Core 5 SKU in the launch deck shows up to 18 NPU TOPS / up to 2 Xe cores) - set the numbers for the exact SKU on the machine."
+    }
+  ]
+}

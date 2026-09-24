@@ -1,0 +1,12 @@
+.venv/
+models/
+media/
+cache/
+logs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.tmp
+*.part

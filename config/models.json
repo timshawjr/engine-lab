@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-09-23",
+  "rules": [
+    "Every URL below was fetched and content-verified on the date above (XML responses must start with '<?xml' and content-type application/xml).",
+    "Do not substitute a different model or source without re-running tools/verify_sources.py and recording the new result.",
+    "gflops is null on purpose: fill it only from the model card URL in 'spec_url' and record the number you read. Never estimate it.",
+    "All models must be consumed at STATIC shapes (NPU rejects dynamic shapes)."
+  ],
+  "models": [
+    {
+      "id": "yolo11n-fp16",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "FP16",
+      "source": "huggingface",
+      "repo": "OpenVINO/YOLO11n-fp16-ov",
+      "files": [
+        "yolo11n.xml",
+        "yolo11n.bin"
+      ],
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "labels": "coco80",
+      "gflops": null,
+      "spec_url": "https://huggingface.co/OpenVINO/YOLO11n-fp16-ov"
+    },
+    {
+      "id": "yolo11n-int8",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "INT8",
+      "source": "huggingface",
+      "repo": "OpenVINO/YOLO11n-int8-ov",
+      "files": [
+        "yolo11n.xml",
+        "yolo11n.bin"
+      ],
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "labels": "coco80",
+      "gflops": null,
+      "spec_url": "https://huggingface.co/OpenVINO/YOLO11n-int8-ov"
+    },
+    {
+      "id": "efficientnet-b0-fp16",
+      "role": "classifier",
+      "task": "classification",
+      "prec": "FP16",
+      "source": "huggingface",
+      "repo": "OpenVINO/efficientnet_b0-fp16-ov",
+      "files": [
+        "efficientnet_b0.xml",
+        "efficientnet_b0.bin"
+      ],
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "labels": "imagenet1k",
+      "gflops": null,
+      "spec_url": "https://huggingface.co/OpenVINO/efficientnet_b0-fp16-ov"
+    },
+    {
+      "id": "efficientnet-b0-int8",
+      "role": "classifier",
+      "task": "classification",
+      "prec": "INT8",
+      "source": "huggingface",
+      "repo": "OpenVINO/efficientnet_b0-int8-ov",
+      "files": [
+        "efficientnet_b0.xml",
+        "efficientnet_b0.bin"
+      ],
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "labels": "imagenet1k",
+      "gflops": null,
+      "spec_url": "https://huggingface.co/OpenVINO/efficientnet_b0-int8-ov"
+    },
+    {
+      "id": "person-detection-retail-0013",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-detection-retail-0013/FP16/person-detection-retail-0013.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-detection-retail-0013/FP16/person-detection-retail-0013.bin",
+      "input_shape": [
+        1,
+        3,
+        320,
+        544
+      ],
+      "labels": "omz:person-detection-retail-0013",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/person-detection-retail-0013/README.md"
+    },
+    {
+      "id": "product-detection-0001",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/product-detection-0001/FP16/product-detection-0001.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/product-detection-0001/FP16/product-detection-0001.bin",
+      "input_shape": [
+        1,
+        3,
+        512,
+        512
+      ],
+      "labels": "omz:product-detection-0001",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/product-detection-0001/README.md"
+    },
+    {
+      "id": "person-vehicle-bike-detection-crossroad-1016",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-vehicle-bike-detection-crossroad-1016/FP16/person-vehicle-bike-detection-crossroad-1016.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-vehicle-bike-detection-crossroad-1016/FP16/person-vehicle-bike-detection-crossroad-1016.bin",
+      "input_shape": [
+        1,
+        3,
+        512,
+        512
+      ],
+      "labels": "omz:person-vehicle-bike-detection-crossroad-1016",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/person-vehicle-bike-detection-crossroad-1016/README.md"
+    },
+    {
+      "id": "vehicle-license-plate-detection-barrier-0106",
+      "role": "detector",
+      "task": "object_detection",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/vehicle-license-plate-detection-barrier-0106/FP16/vehicle-license-plate-detection-barrier-0106.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/vehicle-license-plate-detection-barrier-0106/FP16/vehicle-license-plate-detection-barrier-0106.bin",
+      "input_shape": [
+        1,
+        300,
+        300,
+        3
+      ],
+      "labels": "omz:vehicle-license-plate-detection-barrier-0106",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/vehicle-license-plate-detection-barrier-0106/README.md"
+    },
+    {
+      "id": "age-gender-recognition-retail-0013",
+      "role": "classifier",
+      "task": "attribute",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin",
+      "input_shape": [
+        1,
+        3,
+        62,
+        62
+      ],
+      "labels": "omz:age-gender-recognition-retail-0013",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/age-gender-recognition-retail-0013/README.md"
+    },
+    {
+      "id": "human-pose-estimation-0001",
+      "role": "pose",
+      "task": "pose_estimation",
+      "prec": "FP16",
+      "source": "omz_models_bin",
+      "url_xml": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/human-pose-estimation-0001/FP16/human-pose-estimation-0001.xml",
+      "url_bin": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/human-pose-estimation-0001/FP16/human-pose-estimation-0001.bin",
+      "input_shape": [
+        1,
+        3,
+        256,
+        456
+      ],
+      "labels": "omz:human-pose-estimation-0001",
+      "gflops": null,
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/human-pose-estimation-0001/README.md"
+    }
+  ],
+  "media": [
+    {
+      "id": "retail_aisle",
+      "file": "store-aisle-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/store-aisle-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "traffic",
+      "file": "person-bicycle-car-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/person-bicycle-car-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "street_cars",
+      "file": "car-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/car-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "people_queue",
+      "file": "one-by-one-person-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/one-by-one-person-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "walking_people",
+      "file": "face-demographics-walking.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/face-demographics-walking.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "pose_subject",
+      "file": "head-pose-face-detection-male.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/head-pose-face-detection-male.mp4",
+      "verified": "200 video/mp4 (range GET 206)"
+    }
+  ],
+  "not_available_as_prebuilt_ir": [
+    {
+      "id": "brain-tumor-segmentation-0002",
+      "reason": "OMZ public model; models_bin has no FP16 IR (verified 2026-09-23: returns text/html). Requires conversion from the public source before use.",
+      "used_by": "medical-imaging (optional phase 4)"
+    },
+    {
+      "id": "efficientnet-b0 (OMZ)",
+      "reason": "OMZ public model, no prebuilt IR; use the HuggingFace OpenVINO/efficientnet_b0-fp16-ov repo instead."
+    }
+  ]
+}
