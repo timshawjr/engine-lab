@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import numpy as np
 import openvino as ov
+import psutil
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,7 @@ TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
 CACHE_DIR = ROOT / "cache"
 MINIMUM_NPU_DRIVER = "32.0.100.5540"
 DEVICES = ("NPU", "GPU", "CPU")
+RUNTIME_INFERENCE_COUNT = 20
 
 
 @dataclass
@@ -444,14 +447,34 @@ def _model_and_compile_checks(report: Preflight, config: dict[str, Any], core: o
                 continue
             started = time.perf_counter()
             try:
-                compiled = core.compile_model(model_ir, device)
-                elapsed = (time.perf_counter() - started) * 1000.0
+                compile_config: dict[str, Any] = {
+                    "CACHE_DIR": str(CACHE_DIR),
+                    "PERFORMANCE_HINT": "LATENCY",
+                }
+                if device == "CPU":
+                    compile_config["PERFORMANCE_HINT"] = "THROUGHPUT"
+                    compile_config["NUM_STREAMS"] = psutil.cpu_count(logical=False) or 1
+                compiled = core.compile_model(model_ir, device, compile_config)
+                compile_ms = (time.perf_counter() - started) * 1000.0
                 devices, placement_error = _placement(compiled, device)
                 placement_ok = bool(devices) and any(
                     value.upper().split(".", 1)[0] == device for value in devices
                 )
+                if actual_shape is None:
+                    raise RuntimeError(shape_error or "input shape is not static")
+                input_tensor = np.zeros(tuple(actual_shape), dtype=np.float32)
+                queue = ov.AsyncInferQueue(compiled)
+                inference_started = time.perf_counter()
+                for sample_index in range(RUNTIME_INFERENCE_COUNT):
+                    queue.start_async(input_tensor, sample_index)
+                    queue.wait_all()
+                inference_ms = (time.perf_counter() - inference_started) * 1000.0
                 status = "PASS" if placement_ok else "WARN"
-                detail = f"compiled in {elapsed:.0f} ms; EXECUTION_DEVICES={devices or 'unavailable'}"
+                detail = (
+                    f"compiled in {compile_ms:.0f} ms; "
+                    f"{RUNTIME_INFERENCE_COUNT}/{RUNTIME_INFERENCE_COUNT} AsyncInferQueue runs "
+                    f"in {inference_ms:.0f} ms; EXECUTION_DEVICES={devices or 'unavailable'}"
+                )
                 remediation = "Use EXECUTION_DEVICES as placement proof before rendering a device badge"
                 report.add("compile", f"{model_id} on {device}", status, detail, remediation)
                 if placement_error:
@@ -462,6 +485,7 @@ def _model_and_compile_checks(report: Preflight, config: dict[str, Any], core: o
                         placement_error,
                         "Use EXECUTION_DEVICES as placement proof before rendering a device badge",
                     )
+                del queue
                 del compiled
             except Exception as exc:
                 elapsed = (time.perf_counter() - started) * 1000.0
@@ -586,6 +610,42 @@ def _phase1_runtime_checks(report: Preflight, core: ov.Core, available: set[str]
                 f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500],
                 "Fix the device/driver/model runtime error; Phase 1 requires one inference on every device",
             )
+
+
+def _availability_check(report: Preflight) -> None:
+    from app.engine.availability import DEVICES as AVAILABILITY_DEVICES
+    from app.engine.availability import probe_device_availability
+
+    try:
+        matrix = probe_device_availability(MODELS_CONFIG, CACHE_DIR)
+    except Exception as exc:
+        report.add(
+            "phase 2 availability",
+            "model × device gate",
+            "FAIL",
+            f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500],
+            "Restore the model files, cache write permission, and pinned OpenVINO runtime",
+        )
+        return
+    expected = len(matrix.models) * len(AVAILABILITY_DEVICES)
+    actual = sum(len(model.devices) for model in matrix.models.values())
+    successful = sum(
+        result.success
+        for model in matrix.models.values()
+        for result in model.devices.values()
+    )
+    complete = actual == expected and "CPU" in matrix.available_devices
+    status = "PASS" if complete else "FAIL"
+    report.add(
+        "phase 2 availability",
+        "model × device gate",
+        status,
+        (
+            f"cache={'hit' if matrix.cache_hit else 'cold'}; fingerprint={matrix.fingerprint[:16]}; "
+            f"results={successful}/{expected} successful; devices={list(matrix.available_devices)}"
+        ),
+        "Inspect logs/availability.log and the F1 operator matrix; never hide a per-model failure",
+    )
 
 
 def _video_checks(report: Preflight, config: dict[str, Any]) -> None:
@@ -724,6 +784,7 @@ def main(argv: list[str] | None = None) -> int:
         report.add("compile", "matrix", "WARN", "skipped by explicit --skip-compile", "Run without this switch for phase exit verification")
     else:
         _model_and_compile_checks(report, config, core, available)
+        _availability_check(report)
     _phase1_runtime_checks(report, core, available)
 
     report.print()

@@ -13,9 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEventLoop, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QProgressDialog
 
+from app.engine.availability import DEVICES, AvailabilityMatrix, AvailabilityWorker
+from app.engine.device_policy import DENSITIES, DeviceMode
 from app.hud import MainWindow
 
 
@@ -215,6 +217,31 @@ def _selftest() -> int:
             return f"YOLO11n static input={input_size}, labels={len(labels)}, 1920x1080 theme ready"
 
         _selftest_check(checks, "Phase 1 local inventory", phase1_inventory_check)
+
+        def phase2_local_inventory_check() -> str:
+            from app.engine.availability import AvailabilityMatrix
+            from app.engine.device_policy import DevicePolicy, DeviceMode
+
+            policy = DevicePolicy(available_devices=("NPU", "GPU", "CPU"))
+            policy.toggle_npu()
+            policy.toggle_gpu()
+            both_off = policy.snapshot()
+            if (
+                policy.device_for_stream(0) != "CPU"
+                or both_off.mode != DeviceMode.SPREAD
+                or both_off.active_devices != ("CPU",)
+            ):
+                raise RuntimeError("Phase 2 both-off policy did not resolve to CPU")
+            policy.set_density(8)
+            availability_path = ROOT / "cache" / "availability.json"
+            payload = json.loads(availability_path.read_text(encoding="utf-8"))
+            matrix = AvailabilityMatrix.from_dict(payload, cache_hit=True)
+            result_count = sum(len(model.devices) for model in matrix.models.values())
+            if len(matrix.models) != 10 or result_count != 30 or "CPU" not in matrix.available_devices:
+                raise RuntimeError("Phase 2 availability cache is incomplete")
+            return "policy both-off=CPU, density=8, availability=10 models × 3 devices"
+
+        _selftest_check(checks, "Phase 2 local inventory", phase2_local_inventory_check)
     finally:
         socket.socket.connect = original_connect  # type: ignore[method-assign]
         socket.socket.connect_ex = original_connect_ex  # type: ignore[method-assign]
@@ -240,13 +267,45 @@ def build_parser() -> argparse.ArgumentParser:
         "--scenario",
         choices=("retail",),
         default="retail",
-        help="Phase 1 implements the retail reference scenario",
+        help="Phases 1-2 implement the retail reference scenario",
     )
     parser.add_argument(
         "--device",
         choices=("NPU", "GPU", "CPU"),
-        default="NPU",
-        help="explicit OpenVINO device; placement is verified with EXECUTION_DEVICES",
+        default=None,
+        help="start in an explicit single-device mode; default starts in spread mode",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=tuple(mode.value for mode in DeviceMode if mode is not DeviceMode.OFF),
+        default=None,
+        help="start in a device policy mode",
+    )
+    parser.add_argument(
+        "--density",
+        type=int,
+        choices=DENSITIES,
+        default=1,
+        help="initial number of independent streams",
+    )
+    parser.add_argument("--npu-off", action="store_true", help="start with the NPU operator toggle off")
+    parser.add_argument("--gpu-off", action="store_true", help="start with the GPU operator toggle off")
+    parser.add_argument(
+        "--npu-toggle-after",
+        type=float,
+        default=0.0,
+        help="diagnostic: toggle N after this many seconds (0 disables the scheduled action)",
+    )
+    parser.add_argument(
+        "--gpu-toggle-after",
+        type=float,
+        default=0.0,
+        help="diagnostic: toggle GPU after this many seconds (0 disables the scheduled action)",
+    )
+    parser.add_argument(
+        "--force-availability",
+        action="store_true",
+        help="diagnostic: ignore the fingerprinted DeviceAvailability cache",
     )
     parser.add_argument("--fullscreen", action="store_true", help="run the booth UI fullscreen")
     parser.add_argument(
@@ -293,10 +352,74 @@ def _write_diagnostic(path: Path, payload: dict) -> None:
     os.replace(temporary, path)
 
 
+def _run_availability_gate(*, force: bool) -> AvailabilityMatrix:
+    probe_count = len(_load_json(REQUIRED_CONFIG)["models"]) * len(DEVICES)
+    progress = QProgressDialog(
+        "Checking model × device availability…",
+        "",
+        0,
+        probe_count,
+    )
+    progress.setWindowTitle("Engine Lab — DeviceAvailability")
+    progress.setCancelButton(None)
+    progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+    progress.setMinimumDuration(0)
+    progress.show()
+
+    worker = AvailabilityWorker(
+        REQUIRED_CONFIG,
+        ROOT / "cache",
+        force=force,
+    )
+    loop = QEventLoop()
+    result: dict[str, object] = {}
+
+    def on_progress(value: int, text: str) -> None:
+        progress.setValue(value)
+        progress.setLabelText(text)
+
+    def on_completed(matrix: object) -> None:
+        result["matrix"] = matrix
+        loop.quit()
+
+    def on_failed(error: str) -> None:
+        result["error"] = error
+        loop.quit()
+
+    worker.progress.connect(on_progress)
+    worker.completed.connect(on_completed)
+    worker.failed.connect(on_failed)
+    worker.start()
+    loop.exec()
+    worker.wait()
+    progress.close()
+    if "error" in result:
+        raise RuntimeError(f"DeviceAvailability gate failed: {result['error']}")
+    matrix = result.get("matrix")
+    if not isinstance(matrix, AvailabilityMatrix):
+        raise RuntimeError("DeviceAvailability gate returned no matrix")
+    LOGGER.info(
+        "DeviceAvailability %s: devices=%s models=%d fingerprint=%s",
+        "cache hit" if matrix.cache_hit else "cold probe",
+        matrix.available_devices,
+        len(matrix.models),
+        matrix.fingerprint,
+    )
+    return matrix
+
+
 def _run_application(args: argparse.Namespace) -> int:
     video_path, camera_index, source_description = _source_details(args.source)
     if args.exit_after < 0:
         raise ValueError("--exit-after cannot be negative")
+    for name, value in (
+        ("--npu-toggle-after", args.npu_toggle_after),
+        ("--gpu-toggle-after", args.gpu_toggle_after),
+    ):
+        if value < 0:
+            raise ValueError(f"{name} cannot be negative")
+        if value and (args.exit_after <= 0 or value >= args.exit_after):
+            raise ValueError(f"{name} requires --exit-after greater than the action time")
     if args.screenshot is not None and args.exit_after <= 0:
         raise ValueError("--screenshot requires --exit-after")
 
@@ -304,20 +427,38 @@ def _run_application(args: argparse.Namespace) -> int:
     application.setApplicationName("Engine Lab")
     application.setOrganizationName("Engine Lab")
     application.setStyle("Fusion")
+    availability = _run_availability_gate(force=args.force_availability)
+    initial_mode = DeviceMode(args.mode) if args.mode is not None else None
     window = MainWindow(
-        device=args.device,
         source_description=source_description,
         video_path=video_path,
         camera_index=camera_index,
         cache_dir=ROOT / "cache",
         telemetry_map_path=TELEMETRY_MAP,
+        availability=availability,
         fullscreen=args.fullscreen,
+        initial_device=args.device,
+        initial_mode=initial_mode,
+        initial_density=args.density,
+        npu_enabled=not args.npu_off,
+        gpu_enabled=not args.gpu_off,
     )
     window.start()
+    if args.npu_toggle_after:
+        QTimer.singleShot(
+            round(args.npu_toggle_after * 1000.0),
+            window.toggle_npu,
+        )
+    if args.gpu_toggle_after:
+        QTimer.singleShot(
+            round(args.gpu_toggle_after * 1000.0),
+            window.toggle_gpu,
+        )
 
     diagnostic_path = args.diagnostic_output
     if diagnostic_path is None and args.exit_after > 0:
-        diagnostic_path = Path("logs") / f"phase1-{args.device.lower()}.json"
+        mode_name = (initial_mode.value if initial_mode is not None else (args.device.lower() if args.device else "spread"))
+        diagnostic_path = Path("logs") / f"phase2-{mode_name}-d{args.density}.json"
     snapshot_written = False
 
     def write_snapshot() -> None:
@@ -354,10 +495,17 @@ def main(argv: list[str] | None = None) -> int:
     handler = _session_log()
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     LOGGER.info(
-        "Engine Lab started source=%s scenario=%s device=%s selftest=%s",
+        "Engine Lab started source=%s scenario=%s device=%s mode=%s density=%s "
+        "npu_off=%s gpu_off=%s npu_toggle_after=%s gpu_toggle_after=%s selftest=%s",
         args.source,
         args.scenario,
         args.device,
+        args.mode,
+        args.density,
+        args.npu_off,
+        args.gpu_off,
+        args.npu_toggle_after,
+        args.gpu_toggle_after,
         args.selftest,
     )
     if args.selftest:

@@ -208,3 +208,121 @@ for this process's busiest engine. CPU was measured system-wide with psutil. Uns
 The interactive one-click command is `run_demo.bat`. A diagnostic wrapper smoke run produced 140 NPU
 frames with `EXECUTION_DEVICES=['NPU']` and no application error. `Q`/`Esc` quits and `F11` toggles
 fullscreen.
+
+---
+
+## Phase 2 — toggles, density, and DeviceAvailability
+
+**Status: implementation measured; §11.4–7 and §11.9 pass. The literal strict-stream clause in
+§11.8 does not pass on this machine and is not reported as a pass.** The measured aggregate
+source-rate capacity has the required direction, but no individual density-8 accelerator stream
+held 90% of the 59.94 FPS source.
+
+### Implementation
+
+- `app/engine/device_policy.py` is the single mode/toggle/density policy. `spread` uses exact
+  stream-index round-robin over the active NPU/GPU/CPU set; toggles remove devices from that set.
+- `app/engine/availability.py` probes all 10 models on NPU/GPU/CPU, validates explicit placement
+  from `EXECUTION_DEVICES`, writes a SHA-256/driver/OpenVINO-fingerprinted cache, and appends every
+  result to `logs/availability.log`.
+- Every density stream owns an `AsyncInferQueue`. NPU/GPU and CPU placement are retained in the raw
+  diagnostic JSON. A shared compiled-model cache coordinates affected swaps so the visible video
+  and 5 Hz telemetry remain live.
+- CPU-only and both-off use `THROUGHPUT` and the measured physical-core count, `NUM_STREAMS=8`.
+  Multi-stream `spread` gives each independent CPU copy a fair share of the physical cores rather
+  than oversubscribing eight full-device queues per tile; the chosen value is recorded in every
+  `RunnerInfo` sample.
+- Disabled gauges are grey, read `OFF BY OPERATOR`, and retain their last measured value. The F1
+  table displays all 30 model×device availability results.
+
+### Full model × device runtime gate
+
+Final preflight executed **20/20 asynchronous inferences for all 30 model×device combinations** and
+verified placement. Representative YOLO11n results were:
+
+| Model/device | Compile | 20 async runs | Placement |
+|---|---:|---:|---|
+| `yolo11n-fp16` / NPU | 24 ms | 102 ms | `['NPU']` |
+| `yolo11n-fp16` / GPU | 533 ms | 55 ms | `['GPU.0']` |
+| `yolo11n-fp16` / CPU | 138 ms | 2,182 ms | `['CPU']` |
+
+All six videos decoded, the availability cache returned 30/30 successful results, and the separate
+real-retail-frame rows still verified `NUM_STREAMS=8` on CPU. Final preflight: **81 PASS, 0 WARN,
+0 FAIL**. The machine-readable table is `logs/preflight-latest.json`; policy/cache unit tests passed
+**9/9**, and the network-blocked self-test passed **10/10**. The final source check returned
+**40 PASS, 0 FAIL**, and the telemetry probe again selected `pdh_gpu_engine` with an observed NPU
+`Neural` instance.
+
+### Live toggle evidence
+
+Each run used two streams in `spread`, toggled after three seconds, and ran for ten seconds. Mean
+5 Hz PDH values compare the samples strictly before and after the requested toggle.
+
+| Action | Placement after swap | All-stream transition | NPU mean | GPU mean | CPU mean | Disabled gauge evidence |
+|---|---|---:|---:|---:|---:|---|
+| `N` off | stream 0 `GPU.0`; stream 1 `CPU` | **125 ms** | 29.26% → 0.26% | 37.93% → 50.91% | 46.16% → 54.97% | NPU grey; last `29.51%` retained |
+| `G` off | stream 0 `NPU`; stream 1 `CPU` | **140 ms** | 29.23% → 33.29% | 39.33% → 0.37% | 44.21% → 51.77% | GPU grey; last `54.07%` retained |
+
+Both transitions are below the two-second limit and the assertions used the final compiled
+`EXECUTION_DEVICES`, not gauge appearance. A final `run_demo.bat` smoke run produced 251 NPU
+frames with `EXECUTION_DEVICES=['NPU']` and no application error. Raw files are
+`logs/phase2-toggle-npu-final.json` and `logs/phase2-toggle-gpu-final.json`; Windows-rendered
+screenshots are `logs/phase2-toggle-npu.png` and `logs/phase2-toggle-gpu.png`.
+
+### Density measurements
+
+The source is 720×404 at 59.940 FPS. "Strict real-time" means an individual tile sustained at least
+90% of that source rate. "Real-time equivalents" is the separately labelled sum of
+`min(1, processing_fps / source_fps)` across tiles; it measures aggregate capacity but is **not**
+substituted for the strict count.
+
+| Density / policy | Processed | Strict real-time | Real-time equivalents | CPU max | Result |
+|---|---:|---:|---:|---:|---|
+| 4 / `spread`, accelerators on | 4/4 | 0 | 2.759 | 90.7% | no crash; strict target missed |
+| 4 / both off | 4/4 | 0 | 0.617 | 72.6% | all CPU; `NUM_STREAMS=8` |
+| 8 / `spread`, accelerators on | 8/8 | 0 | **3.391** | 97.2% | exact NPU/GPU/CPU round-robin |
+| 8 / both off | 8/8 | 0 | **0.920** | 100.0% | all CPU; `NUM_STREAMS=8`; no crash |
+
+Density-8 `spread` placements were exactly:
+
+```text
+0 NPU → NPU
+1 GPU → GPU.0
+2 CPU → CPU
+3 NPU → NPU
+4 GPU → GPU.0
+5 CPU → CPU
+6 NPU → NPU
+7 GPU → GPU.0
+```
+
+Measured per-device raw percentiles in that run were:
+
+| Placement | Samples | Inference p50 / p95 | End-to-end p50 / p95 | Mean processing FPS |
+|---|---:|---:|---:|---:|
+| NPU | 923 | 9.06 / 13.21 ms | 29.76 / 36.20 ms | 33.85 |
+| GPU | 900 | 8.20 / 13.74 ms | 29.22 / 36.63 ms | 33.50 |
+| CPU | 91 | 170.24 / 200.79 ms | 193.91 / 222.35 ms | 4.98 |
+
+The both-off run processed all eight streams, averaged 6.896 FPS per CPU tile, had no application
+error, and used physical-core `NUM_STREAMS=8` on every tile. Raw files are
+`logs/phase2-d8-spread-final.json` and `logs/phase2-d8-off-final.json`; the rendered evidence is
+`logs/phase2-d8-spread.png` and `logs/phase2-d8-off.png`.
+
+**Literal §11.8 result: FAIL (strict count 0 versus 0).** The aggregate real-time-equivalent result
+is lower with both accelerators off (0.920 versus 3.391), but the specification's wording requires
+the strict stream count itself to be lower. No priority scheduler, frame-drop declaration, source
+FPS reduction, or relabeling was added to manufacture a pass. This remains the sole Phase 2 exit
+issue on the measured machine.
+
+### Phase 2 commands
+
+```text
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m app.main --selftest
+.venv\Scripts\python.exe tools\preflight.py
+.venv\Scripts\python.exe -m app.main --mode spread --density 2 --npu-toggle-after 3 --exit-after 10 --diagnostic-output logs\phase2-toggle-npu-final.json
+.venv\Scripts\python.exe -m app.main --mode spread --density 2 --gpu-toggle-after 3 --exit-after 10 --diagnostic-output logs\phase2-toggle-gpu-final.json
+.venv\Scripts\python.exe -m app.main --mode spread --density 8 --exit-after 10 --diagnostic-output logs\phase2-d8-spread-final.json
+.venv\Scripts\python.exe -m app.main --mode spread --density 8 --npu-off --gpu-off --exit-after 10 --diagnostic-output logs\phase2-d8-off-final.json
+```

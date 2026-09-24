@@ -25,6 +25,7 @@ class Theme:
     font_regular: int = 18
     font_semibold: int = 21
     font_metric: int = 30
+    font_metric_compact: int = 24
     font_engine_value: int = 72
     font_title: int = 34
     font_badge: int = 18
@@ -46,6 +47,12 @@ class Theme:
     minimum_window_height: int = 720
     design_width: int = 1920
     design_height: int = 1080
+    tile_display_fps: int = 30
+    stream_rate_window_seconds: float = 2.0
+    telemetry_recent_seconds: float = 2.0
+    streams_real_time_fraction: float = 0.90
+    single_tile_row_max_height: int = 150
+    multi_tile_row_max_height: int = 270
 
 
 THEME = Theme()
