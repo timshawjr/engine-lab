@@ -60,6 +60,7 @@ OMZ_LABELS: dict[str, dict[str, Any]] = {
             "right_eye",
             "left_ear",
             "right_ear",
+            "neck",
             "left_shoulder",
             "right_shoulder",
             "left_elbow",

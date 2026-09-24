@@ -1,53 +1,51 @@
 # Engine Lab
 
-Engine Lab is a single-process Windows 11 Python demo for an Intel Core Ultra NPU, integrated GPU,
-and CPU. The project follows an honesty-first rule: every displayed utilization or performance
-value must be measured or come from a cited configuration source. Missing counters are labelled
-as missing; no synthetic load or fallback zeros are used.
+Engine Lab is a single-process Windows 11 Python booth demo for an Intel Core Ultra NPU,
+integrated GPU, and CPU. It plays deterministic, prerecorded video through real OpenVINO
+inference and shows measured throughput, latency, placement, and business events at a glance.
+Every displayed utilization or performance value is measured or comes from a cited configuration
+source. Missing counters are labelled as missing; the app does not generate synthetic load or
+smooth a value and present it as measured.
 
 ## Phase status
 
-Phases 0 and 1 are complete. Phase 2 now provides the DeviceAvailability startup gate, a live
-device-policy object, NPU/GPU operator toggles, explicit placement badges, density 1/2/4/6/8, and
-one independent `AsyncInferQueue` per displayed stream. The visible video clock is independent of
-inference, so policy swaps do not freeze the source image or 5 Hz telemetry.
+Phases 0–2 are complete and committed locally. Phase 3 is implemented and its full acceptance
+matrix has passed: all four scenarios ran for five minutes at density 1 and one minute at density
+4, followed by a ten-minute density-4 attract cycle. The attract RSS comparison was 3051.39 MiB
+at the first sample after two minutes and 3099.17 MiB at the final sample, measured growth **1.57%**.
+The generated evidence is in `logs/phase3-benchmark-summary.json`, the per-run JSON files, and the
+marked section at the end of `bench_report.md`.
 
-The Phase 2 implementation is measured on this machine, but its report does **not** claim the
-literal §11.8 strict-stream assertion as passed: at density 8, no individual tile held 90% of the
-59.94 FPS source when accelerators were enabled. The measured aggregate real-time capacity was
-3.391 source-rate stream equivalents with accelerators on versus 0.920 with both off. Both runs are
-recorded honestly in `bench_report.md`; the strict count was 0 versus 0. This is an observed
-hardware/workload limitation, not a hidden or simulated pass.
+The Phase 2 literal §11.8 strict-stream result remains an explicit, documented miss on this machine:
+at density 8, zero individual tiles held 90% of the 59.940 FPS retail source with accelerators on,
+and zero did with both accelerators off. The separately labelled aggregate source-rate capacity was
+3.391 stream equivalents with accelerators on versus 0.920 with both off. That aggregate number was
+not substituted for the strict count, and no priority scheduling, source-FPS reduction, frame-drop
+declaration, or metric relabeling was added.
 
-Phases 3 features—the other three scenarios, business-event overlays, attract mode, and the full
-booth operator overlay—are not implemented yet. Raw command logs, screenshots, availability
-results, and diagnostic samples are under `logs/` on the demo machine.
+## Repository map
 
-## What was installed on this machine
+- `app/main.py` — CLI, startup gate, scenario compiler, diagnostics, scheduled test actions.
+- `app/hud.py` — Qt booth UI, overlays, gauges, stream tiles, ticker, attract mode, F1 operator view.
+- `app/engine/device_policy.py` — modes, NPU/GPU toggles, density, and explicit round-robin placement.
+- `app/engine/availability.py` — model × device startup gate, `EXECUTION_DEVICES` validation, fingerprint cache.
+- `app/engine/pipelines.py` — four scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
+- `app/engine/stages.py` — static-shape preprocessing, YOLO/SSD/classification/pose postprocessing.
+- `app/engine/events.py` — business-event dictionaries and track/zone state.
+- `app/telemetry/` — PDH GPU/NPU counters, SetupAPI device identity, psutil CPU, and 5 Hz sampling.
+- `config/scenarios.json` — the four normalized-zone scenario definitions and event thresholds.
+- `tools/preflight.py` — the local PASS/FAIL gate.
+- `tools/benchmark_matrix.py` — the long-run scenario × density acceptance matrix.
+- `bench_report.md` — measured evidence, including the explicit Phase 2 miss.
 
-The successful route was direct `winget` commands, not a PowerShell build script:
+`models/`, `media/`, `cache/`, and `logs/` are local/git-ignored runtime data. The repository root
+on this machine is `C:\dev\engine-lab`; the only intentional machine-specific paths are in this
+runbook and `run_demo.bat`.
 
-```cmd
-winget install --id Python.Python.3.12 -e --scope user --silent --accept-package-agreements --accept-source-agreements
-winget install --id Git.Git -e --scope user --silent --accept-package-agreements --accept-source-agreements
-```
+## One-time machine verification
 
-The x64 Visual C++ runtime was already installed as `14.50.35710.00`. Python 3.12.10 was installed
-under the user profile. The repository-local environment was then created directly:
-
-```cmd
-cd C:\dev\engine-lab
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-No application command requires elevation. Driver installation is the only elevated operation and
-must be performed by the operator.
-
-## One-time Phase 0 verification
-
-Run these commands directly; do not depend on script execution policy:
+Run from an ordinary standard-user PowerShell or command prompt. Driver installation is the only
+elevated operation; the demo itself must not be elevated.
 
 ```cmd
 cd C:\dev\engine-lab
@@ -56,167 +54,189 @@ cd C:\dev\engine-lab
 .venv\Scripts\python.exe tools\probe_telemetry.py
 .venv\Scripts\python.exe tools\preflight.py
 .venv\Scripts\python.exe -m app.main --selftest
+.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`verify_sources.py` validates response bodies: OpenVINO IR must start with an XML declaration,
-Hugging Face label config must be JSON with labels, binary payloads must not be HTML or Git LFS
-pointers, model cards must identify the configured repository/model, and videos must have an MP4
-`ftyp` box. HTTP status alone is not accepted.
+`verify_sources.py` checks response bodies, not only HTTP status: IR must begin with an XML
+ declaration, model labels must be valid metadata, binary payloads must not be HTML/LFS pointers,
+and videos must contain an MP4 `ftyp` box. `download_models.py` is idempotent and records a
+SHA-256 inventory. `probe_telemetry.py` writes the raw PDH instance map and fails closed when no
+NPU counter is found unless its explicit development fallback is requested.
 
-`download_models.py` is idempotent. It writes models to `models/`, videos to `media/`, and a
-SHA-256 inventory to `models/download_manifest.json`. Hugging Face label metadata is retained as
-`source_config.json`; OMZ label metadata is written with its official model-document URL.
+The current local checks on this machine are:
 
-`probe_telemetry.py` prints every observed GPU Engine instance, writes
-`config/telemetry_map.json`, and exits non-zero if no NPU instance is found unless
-`--allow-fallback` is explicitly supplied. The app-measured NPU fallback is always declared in the
-map and must be labelled in the future HUD.
+- source verification: **40 PASS, 0 FAIL**;
+- preflight: **89 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model ×
+  NPU/GPU/CPU combination and the four Phase 3 scenario graphs;
+- network-blocked self-test: **11 PASS, 0 FAIL**;
+- unit tests: **20 PASS, 0 FAIL**.
 
-`preflight.py` is the phase exit gate. Do not use `--skip-compile` for phase verification; that
-switch is only for local development while iterating on the checker. Phase 2 executes 20 real
-`AsyncInferQueue` requests for every one of the 10 models on NPU, GPU, and CPU, verifies each
-reported `EXECUTION_DEVICES` root, validates the fingerprinted availability cache, and retains the
-Phase 1 real-retail-frame and physical-core CPU-stream assertions.
+## Running the booth
 
-## Run the Phase 2 retail demo
-
-The one-click wrapper starts the default `spread` policy fullscreen with no console window:
+### One-click default
 
 ```cmd
 cd C:\dev\engine-lab
 run_demo.bat
 ```
 
-Equivalent explicit startup commands are:
+The launcher uses `pythonw.exe`, starts `app.main` fullscreen with the retail scenario, `spread`
+policy, and density 1, and does not leave a console window visible. It is deterministic and does
+not use a camera or network. On this machine the measured cache-cold startup was 26.09 s
+(32.02 s including the five-second diagnostic exit), and the warm startup was 1.00 s
+(10.57 s including the same exit); both were error-free.
+
+### Exact scenario commands
+
+Run any vertical explicitly with:
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail --mode npu_only --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail --mode gpu_only --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail --mode cpu_only --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail      --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario smart_city  --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario medical      --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario gov_defense --mode spread --density 1 --fullscreen
 ```
 
-Operator keys:
+The four graphs are:
 
-- `N` / `G`: disable or re-enable the NPU/GPU; the header, gauges, tile badges, and compiled
-  placement update from the same policy snapshot.
-- `C`: cycle `auto → spread → npu_only → gpu_only → cpu_only → split`, skipping unavailable devices.
-- `+` / `-`: change density through 1, 2, 4, 6, 8.
-- `F1`: open the 10-model × 3-device availability matrix.
-- `F11`: toggle fullscreen. `Q` asks for confirmation before quitting; `Esc` exits immediately.
+| Key | Scenario | Video | Measured stage story |
+|---:|---|---|---|
+| `1` | Retail / POS | `store-aisle-detection.mp4` | YOLO11n detection → EfficientNet-B0 top-k classification → shelf/zone events |
+| `2` | Smart city / traffic | `person-bicycle-car-detection.mp4` | crossroad detection → EfficientNet classification → lane/zone counts |
+| `3` | Medical / eldercare | `one-by-one-person-detection.mp4` | person detection → pose heatmap/PAF decoding → posture/zone events |
+| `4` | Government / defense | `car-detection.mp4` | independent perimeter copies → person/plate detection → IoU tracks/plate events |
 
-The camera variant remains opt-in and uses the same policy and density pipeline:
+The initial `spread` assignment is explicit and visible in each tile. Retail, smart-city, and pose
+work use the NPU where the measured graph calls for it; the medical person detector is explicitly
+GPU-preferred because the local NPU output for that OMZ detector was not useful for the event
+overlay, while its pose stage remains on the NPU. The operator overlay always reports the actual
+`EXECUTION_DEVICES`; the requested preference is never presented as proof.
+
+### Attract and unattended run
+
+Attract mode hides the gauges, shows a large vertical headline, cycles deterministically through
+all four scenarios, and continues processing/telemetry in the background. Any key returns to the
+measured demo page.
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --source camera:0 --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail --mode spread --density 4 --attract
 ```
 
-For auditable runs, `--exit-after`, `--screenshot`, and `--diagnostic-output` write raw frame and
-telemetry samples. The two scheduled-toggle switches reproduce the §11.5–7 checks without synthetic
-input:
+The full acceptance matrix is:
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --mode spread --density 2 --npu-toggle-after 3 --exit-after 10 ^
-  --screenshot logs\phase2-toggle-npu.png --diagnostic-output logs\phase2-toggle-npu.json
-.venv\Scripts\python.exe -m app.main --mode spread --density 2 --gpu-toggle-after 3 --exit-after 10 ^
-  --screenshot logs\phase2-toggle-gpu.png --diagnostic-output logs\phase2-toggle-gpu.json
-.venv\Scripts\python.exe -m app.main --mode spread --density 8 --npu-off --gpu-off --exit-after 10 ^
-  --screenshot logs\phase2-d8-off.png --diagnostic-output logs\phase2-d8-off.json
+.venv\Scripts\python.exe tools\benchmark_matrix.py
 ```
 
-At startup, the gate compiles or loads the fingerprinted cache and shows per-model progress. Full
-results are written to `cache/availability.json`; every probe and cache event is appended to
-`logs/availability.log`. The cache key includes the OpenVINO version, Windows build, Intel NPU/GPU
-driver versions, available device list, and SHA-256 of every model file.
+It runs each scenario for five minutes at density 1, each scenario for one minute at density 4,
+and a ten-minute density-4 attract cycle. It fails a run on an application error, incomplete
+stream count, missing scenario visit, or an RSS growth of 5% or more from the first sample at or
+after two minutes to the final sample. Use `--quick` only for development smoke tests; quick
+RSS numbers are not acceptance evidence.
 
-The app reads no network resource at runtime. `python -m app.main --selftest` explicitly blocks
-outbound Python sockets while checking local models, labels, telemetry, policy, availability, and
-UI invariants. Pure policy/cache unit tests run with:
+### Camera variant (opt-in only)
+
+The deterministic loop is the default. A camera is never used unless explicitly requested:
 
 ```cmd
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m app.main --source camera:0 --scenario retail --mode spread --density 1 --fullscreen
 ```
 
-## Verified model-shape correction
+## Keyboard map
 
-The downloaded `vehicle-license-plate-detection-barrier-0106` IR and its official Open Model Zoo
-`model.yml` both report the static input as `[1, 300, 300, 3]` (NHWC). The supplied configuration
-had recorded `[1, 3, 256, 384]`, which did not match the pinned IR. The configuration value was
-corrected to the measured IR shape before the Phase 0 preflight. No model, media, or URL source was
-substituted, and `tools/verify_sources.py` was run again after the correction.
+| Key | Action |
+|---|---|
+| `1`–`4` | Select retail, smart city, medical, or government/defense |
+| `N` | Toggle the NPU; the next inference request uses the reduced device set |
+| `G` | Toggle the GPU |
+| `C` | Cycle `auto → spread → npu_only → gpu_only → cpu_only → split` |
+| `+` / `-` | Change density through 1, 2, 4, 6, 8 |
+| `A` | Enter/leave attract mode; any key leaves attract mode |
+| `F1` | Open the operator overlay |
+| `F11` | Toggle fullscreen |
+| `Q` | Quit after confirmation; `Esc` exits immediately |
 
-## Telemetry found on this machine
+Scenario switches are in-process. Workers retain compiled model stores and per-scenario
+`AsyncInferQueue` caches, while the video clock, overlay, zones, ticker, and event rules switch
+without a process reload. A placement transition is acknowledged only after every active worker
+reports its new `EXECUTION_DEVICES` payload.
 
-The actual provider is the Windows PDH **GPU Engine** counter set, reached through `ctypes` and
-language-neutral `PdhAddEnglishCounterW`. SetupAPI reported:
+## What the HUD measures
 
-```text
-Compute accelerator: Intel(R) AI Boost
-NPU driver: 32.0.100.5540, phys_id=0, LUID node=0x000128A6
-GPU: Intel(R) Arc(TM) 140V GPU (16GB)
-GPU driver: 32.0.101.6737, phys_id=0, LUID node=0x000124A5
-```
+- **Engine gauges:** NPU, GPU, and CPU utilization from the declared telemetry source. PDH
+  `GPU Engine` is used when available; the app-measured NPU duty-cycle fallback is explicitly
+  labelled `APP`. CPU is psutil. A disabled engine is grey, reads `OFF BY OPERATOR`, and retains its
+  last measured value rather than displaying a fabricated zero.
+- **Placement:** stream/stage badges and F1 tables use `compiled_model.get_property(
+  "EXECUTION_DEVICES")`. A requested string alone is never used as proof.
+- **Pipeline metrics:** end-to-end p50/p95, inference count/rate, detection rate, stage breakdown,
+  rolling event count, strict real-time stream count, and source-rate equivalents. Percentiles,
+  windows, and display thresholds live in `app/theme.py` or scenario config, not as hidden metric
+  constants in widgets.
+- **Business events:** every event is a dictionary with `ts`, `type`, `label`, `confidence`, and
+  `zone`; it appears in the on-video ticker and rolling count. The event tracker implements
+  `object_picked_up`, `object_classified`, `person_counted`, `vehicle_counted`, `posture_alert`, and
+  `plate_detected`. Dwell, confidence, IoU, fall-angle, and cooldown thresholds are in
+  `config/scenarios.json`.
+- **Peak TOPS:** the platform card labels these values `peak`; the F1 System tab exposes the
+  profile source. Runtime/measured values are not replaced with peak specifications.
 
-Both devices expose `phys_0`; physical id alone is therefore ambiguous on this Lunar Lake machine.
-The probe uses the exact SetupAPI LUID as the tie-breaker before considering physical id. An
-observed NPU counter line was:
+## Operator overlay and diagnostics
 
-```text
-pid_12332_luid_0x00000000_0x000128A6_phys_0_eng_0_engtype_Neural = 0.00% [NPU/Neural]
-```
+Press `F1` at the booth. The overlay contains:
 
-The `0.00%` above is the counter value observed while that process was idle; it is not a benchmark
-result. With driver 32.0.100.5540, the NPU engine is reported as `Neural`. The probe also logged
-actual GPU engine strings (`3D`, `Compute`, `Copy`, `VideoDecode`, `VideoProcessing`, and `GSC`) and
-classified an unrelated LUID as `UNKNOWN` rather than guessing.
-The complete raw output is `logs/probe_telemetry.log` on the demo machine.
+1. all ten models × NPU/GPU/CPU availability, compile status, exact execution devices, and source URLs;
+2. the live stream/stage placement table;
+3. the raw telemetry map, including PDH instance names, LUID/physical IDs, provider, and fallback;
+4. CPU topology, driver versions, cache path, scenario IDs, and peak-profile source;
+5. the business-event tail and the last 20 session-log lines.
 
-## Driver gate and recovery
+For an auditable run, add `--diagnostic-output logs\<name>.json` and optionally
+`--screenshot logs\<name>.png`. The JSON includes startup time, policy sequence and transitions,
+scenario history, per-stage timings, all sampled telemetry, event dictionaries, availability
+results, and the RSS timeline. The benchmark tool consumes these files rather than scraping the UI.
 
-The Phase 0 specification requires Intel NPU driver `32.0.100.5540` or later. The official
-Intel-signed `npu_win_32.0.100.5540.exe` package was installed on this machine. Its SHA-256 was
-`FBA32699B699918A793FCA05CFC6C607C8745772057347476ECD8C4CF7746048`, and Authenticode verification
-reported `Valid`, signer `Intel Corporation`. The installer returned `1014`, but SetupAPI after the
-required reboot independently reported driver `32.0.100.5540`; preflight is the authority.
+## Pre-show checklist
 
-- Intel NPU driver: <https://www.intel.com/content/www/us/en/download/794734/intel-npu-driver-windows.html>
-- Intel Arc/Iris Xe graphics driver: <https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html>
-
-After any Intel NPU or graphics driver update, reset the OpenVINO blob cache before preflight. The
-operator can run the convenience script or issue the equivalent command directly:
-
-```powershell
-Remove-Item -LiteralPath C:\dev\engine-lab\cache -Recurse -Force -ErrorAction SilentlyContinue
-```
-
-If a model compiled yesterday but not today:
-
-1. Confirm the NPU and GPU driver versions in `tools/preflight.py` output.
-2. Reset `cache/` after any driver change.
-3. Re-run `tools/probe_telemetry.py` and confirm SetupAPI LUIDs and PDH instances still match.
-4. Re-run `tools/preflight.py` without `--skip-compile`.
-5. Inspect `logs/availability.log`; do not hide a model failure by silently falling back to CPU.
+1. Connect AC power and use the Best performance power plan; disable sleep/hibernate timeouts on AC.
+2. Keep the lid open or support the laptop so the platform cannot throttle or sleep.
+3. Connect the external display at 1920×1080 or higher and set the display scale so the 18 px minimum UI text is legible from two metres.
+4. Run the full preflight after the final reboot and confirm 0 FAIL.
+5. Run the network-blocked self-test and the unit tests.
+6. Run one short command for each scenario and one F1 operator-overlay check.
+7. Run the quick matrix during development; run the full matrix before signing off Phase 3.
+8. Disable Wi-Fi for the booth to demonstrate that the runtime is local.
+9. Park Task Manager on the second monitor for the human cross-check.
+10. Keep `run_demo.bat`, the current session log, and the latest diagnostic JSON with the show kit.
 
 ## Task Manager cross-check
 
-At the booth, park Task Manager on the second monitor and enable the NPU, NPU engine, GPU, and GPU
-engine columns. Run one stream on a single explicit device, then compare the app's measured gauge
-with the matching process/engine row. Repeat after changing devices. The human Task Manager view is
-the cross-check only; the application never screenshots, OCRs, or shells out to it.
+Task Manager is a human cross-check, not an application data source. Enable the NPU/NPU engine,
+GPU, and GPU engine columns. Run one explicit device, then compare the matching process/engine row
+with the app gauge and F1 placement table. Repeat after `N`, `G`, and mode changes. The app never
+screenshots, OCRs, or shells out to Task Manager.
 
-## Pre-show machine hygiene
+## Recovery: “NPU compiled yesterday but not today”
 
-Before visitors arrive:
+1. Compare the current NPU and GPU driver versions in `tools/preflight.py` output with the
+   configured minimums.
+2. After any NPU/graphics driver update, remove the OpenVINO blob cache:
 
-- Connect AC power and set the active power plan to Best performance.
-- Disable sleep, monitor, and hibernate timeouts on AC.
-- Keep the lid open or support the laptop so it cannot throttle or sleep.
-- Connect the external display at 1920x1080 or higher.
-- Park Task Manager on the second display for the live NPU/GPU placement check.
-- Run the full preflight after the final reboot.
-- Keep Wi-Fi disabled during the demo to prove runtime operation is local.
+   ```powershell
+   Remove-Item -LiteralPath C:\dev\engine-lab\cache -Recurse -Force -ErrorAction SilentlyContinue
+   ```
 
-The current checkpoint is the measured Phase 2 retail policy/density build. The strict §11.8
-per-stream real-time relation remains an explicit, documented miss on this machine; the raw
-accelerator-on and both-off density-8 runs are preserved. Attract mode and the other verticals
-remain intentionally absent until Phase 3.
+3. Re-run `tools/probe_telemetry.py`; confirm the Intel LUIDs and PDH instance strings still match.
+4. Re-run `tools/preflight.py` without `--skip-compile`.
+5. Inspect `logs/availability.log` and the F1 model table. A model that is unavailable on its
+   preferred accelerator may use the explicitly labelled CPU fallback; a hidden failure is not an
+   acceptable recovery.
+6. Re-run the affected scenario and a short toggle test. If the NPU remains unavailable, report the
+   measured fallback rather than forcing a placement claim.
+
+## Known measured limitation
+
+The strict Phase 2 density-8 relation is still not claimed as a pass. The complete evidence and
+numbers are in `bench_report.md`; Phase 3 does not hide or reinterpret that result. Phase 3 long-run
+acceptance concerns the four scenario durations, density-4 operation, attract-mode stability, and
+RSS criterion, while retaining the same honest metric definitions.

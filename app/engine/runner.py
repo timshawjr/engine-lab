@@ -20,8 +20,8 @@ from PySide6.QtGui import QImage
 
 from app.engine.stages import (
     load_labels,
+    inspect_model_input,
     load_preprocess_config,
-    model_input_size,
     postprocess_yolo,
     preprocess_yolo,
 )
@@ -50,6 +50,7 @@ class RunnerInfo:
     cache_dir: str
     performance_hint: str
     cpu_num_streams: int | None
+    input_layout: str
 
 
 class CompiledModelStore:
@@ -62,11 +63,10 @@ class CompiledModelStore:
         self._core = ov.Core()
         self._core.set_property({"CACHE_DIR": str(self.cache_dir)})
         self._model = self._core.read_model(str(model_path))
-        self._model_height, self._model_width = model_input_size(self._model)
-        self._model_input_shape = tuple(
-            int(dimension.get_length())
-            for dimension in self._model.inputs[0].get_partial_shape()
-        )
+        self._input_spec = inspect_model_input(self._model)
+        self._model_height = self._input_spec.height
+        self._model_width = self._input_spec.width
+        self._model_input_shape = self._input_spec.shape
         self._lock = threading.Lock()
         self._entries: dict[tuple[str, RunnerCompileConfig], tuple[Any, RunnerInfo]] = {}
 
@@ -146,6 +146,7 @@ class CompiledModelStore:
                 cache_dir=str(self.cache_dir),
                 performance_hint=config["PERFORMANCE_HINT"],
                 cpu_num_streams=cpu_num_streams,
+                input_layout=self._input_spec.layout,
             )
             self._entries[key] = (compiled, info)
             return compiled, info
@@ -169,7 +170,9 @@ class OpenVINOSingleRunner:
         self.compiled_store = compiled_store or CompiledModelStore(model_path, cache_dir)
         self.compile_config = compile_config or RunnerCompileConfig()
         self.device = self.compiled_store._normalize_device(device)
+        self.input_spec = self.compiled_store._input_spec
         self._callback_output: np.ndarray | None = None
+        self._callback_outputs: tuple[np.ndarray, ...] = ()
         self._callback_finished_at: float | None = None
         self._callback_error: BaseException | None = None
         self._sequence = 0
@@ -182,30 +185,40 @@ class OpenVINOSingleRunner:
     def _compile(self) -> RunnerInfo:
         compiled, info = self.compiled_store.get(self.device, self.compile_config)
         self._compiled = compiled
+        self._output_count = len(compiled.outputs)
         self._queue = ov.AsyncInferQueue(compiled)
         self._queue.set_callback(self._callback)
-        self._model_height = info.model_input_shape[2]
-        self._model_width = info.model_input_shape[3]
+        self._model_height = self.input_spec.height
+        self._model_width = self.input_spec.width
         return info
 
     def _callback(self, request: Any, userdata: int) -> None:
         try:
-            tensor = request.get_output_tensor(0)
-            self._callback_output = np.array(tensor.data, copy=True)
+            outputs = tuple(
+                np.array(request.get_output_tensor(index).data, copy=True)
+                for index in range(self._output_count)
+            )
+            self._callback_outputs = outputs
+            self._callback_output = outputs[0] if outputs else None
             self._callback_finished_at = time.perf_counter()
             self._callback_error = None
         except BaseException as exc:
+            self._callback_outputs = ()
             self._callback_output = None
             self._callback_finished_at = time.perf_counter()
             self._callback_error = exc
 
-    def infer(self, tensor: np.ndarray) -> tuple[np.ndarray, float]:
-        expected = (1, 3, self._model_height, self._model_width)
+    def infer_all(
+        self,
+        tensor: np.ndarray,
+    ) -> tuple[tuple[np.ndarray, ...], float]:
+        expected = tuple(self.input_spec.shape)
         if tensor.shape != expected or tensor.dtype != np.float32:
             raise ValueError(f"input must be float32 {expected}, got {tensor.shape} {tensor.dtype}")
         if not tensor.flags.c_contiguous:
             tensor = np.ascontiguousarray(tensor)
         self._callback_output = None
+        self._callback_outputs = ()
         self._callback_finished_at = None
         self._callback_error = None
         self._sequence += 1
@@ -216,11 +229,15 @@ class OpenVINOSingleRunner:
         duration_seconds = max(0.0, finished - started)
         if self._callback_error is not None:
             raise RuntimeError("OpenVINO inference callback failed") from self._callback_error
-        if self._callback_output is None:
+        if not self._callback_outputs:
             raise RuntimeError("OpenVINO inference completed without an output tensor")
         if "NPU" in self._execution_roots:
             self.npu_duty_cycle.record_inference(duration_seconds, ended_at=time.monotonic())
-        return self._callback_output, duration_seconds * 1000.0
+        return self._callback_outputs, duration_seconds * 1000.0
+
+    def infer(self, tensor: np.ndarray) -> tuple[np.ndarray, float]:
+        outputs, duration_ms = self.infer_all(tensor)
+        return outputs[0], duration_ms
 
     @property
     def model_width(self) -> int:
@@ -429,35 +446,53 @@ class RetailVideoClock(QThread):
         self.video_path = video_path
         self.camera_index = camera_index
         self._target_fps = 0.0
+        self._path_lock = threading.Lock()
+        self._requested_video_path = video_path
+
+    def set_video_path(self, video_path: Path | None) -> None:
+        with self._path_lock:
+            self._requested_video_path = video_path
 
     def set_target_fps(self, target_fps: float) -> None:
         self._target_fps = max(0.0, float(target_fps))
 
     def run(self) -> None:
         capture: cv2.VideoCapture | None = None
+        current_video_path: Path | None = None
+        source_fps: float | None = None
         try:
-            if self.camera_index is not None:
-                capture = cv2.VideoCapture(self.camera_index)
-                loop = False
-            else:
-                if self.video_path is None:
-                    raise ValueError("loop source requires a video path")
-                capture = cv2.VideoCapture(str(self.video_path))
-                loop = True
-            if not capture.isOpened():
-                raise RuntimeError("video clock could not open the source")
-            source_fps_raw = float(capture.get(cv2.CAP_PROP_FPS))
-            source_fps = source_fps_raw if source_fps_raw > 0 else None
             next_deadline = time.perf_counter()
             frame_index = 0
             while not self.isInterruptionRequested():
+                with self._path_lock:
+                    requested_video_path = self._requested_video_path
+                if self.camera_index is not None:
+                    if capture is None or not capture.isOpened():
+                        if capture is not None:
+                            capture.release()
+                        capture = cv2.VideoCapture(self.camera_index)
+                        source_fps_raw = float(capture.get(cv2.CAP_PROP_FPS))
+                        source_fps = source_fps_raw if source_fps_raw > 0 else None
+                else:
+                    if requested_video_path is None:
+                        raise ValueError("loop source requires a video path")
+                    if capture is not None and requested_video_path != current_video_path:
+                        capture.release()
+                        capture = None
+                    if capture is None:
+                        capture = cv2.VideoCapture(str(requested_video_path))
+                        current_video_path = requested_video_path
+                        source_fps_raw = float(capture.get(cv2.CAP_PROP_FPS))
+                        source_fps = source_fps_raw if source_fps_raw > 0 else None
+                if capture is None or not capture.isOpened():
+                    raise RuntimeError("video clock could not open the source")
                 ok, frame = capture.read()
                 if not ok or frame is None:
-                    if loop:
+                    if self.camera_index is None:
                         capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         ok, frame = capture.read()
                     if not ok or frame is None:
-                        if loop:
+                        if self.camera_index is None:
                             raise RuntimeError("video loop could not restart")
                         self.msleep(10)
                         next_deadline = time.perf_counter()
@@ -465,9 +500,9 @@ class RetailVideoClock(QThread):
                 frame_index += 1
                 self.frame_ready.emit(InferenceThread._to_qimage(frame), frame_index)
                 effective_fps = source_fps
-                if self._target_fps > 0 and source_fps > 0:
+                if self._target_fps > 0 and source_fps:
                     effective_fps = min(source_fps, self._target_fps)
-                if effective_fps > 0:
+                if effective_fps:
                     next_deadline += 1.0 / effective_fps
                     remaining = next_deadline - time.perf_counter()
                     if remaining > 0:

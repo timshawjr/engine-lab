@@ -9,6 +9,7 @@ import logging
 import os
 import socket
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -18,13 +19,20 @@ from PySide6.QtWidgets import QApplication, QProgressDialog
 
 from app.engine.availability import DEVICES, AvailabilityMatrix, AvailabilityWorker
 from app.engine.device_policy import DENSITIES, DeviceMode
+from app.engine.pipelines import (
+    ScenarioCatalog,
+    ScenarioModelRegistry,
+    load_scenario_catalog,
+)
 from app.hud import MainWindow
 
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_CONFIG = ROOT / "config" / "models.json"
 REQUIRED_PROFILES = ROOT / "config" / "platform_profiles.json"
+REQUIRED_SCENARIOS = ROOT / "config" / "scenarios.json"
 TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
+SCENARIO_IDS = ("retail", "smart_city", "medical", "gov_defense")
 
 LOGGER = logging.getLogger("engine_lab")
 
@@ -242,6 +250,28 @@ def _selftest() -> int:
             return "policy both-off=CPU, density=8, availability=10 models × 3 devices"
 
         _selftest_check(checks, "Phase 2 local inventory", phase2_local_inventory_check)
+
+        def phase3_local_inventory_check() -> str:
+            from app.engine.pipelines import load_scenario_catalog
+
+            catalog = load_scenario_catalog(
+                REQUIRED_SCENARIOS,
+                REQUIRED_CONFIG,
+                ROOT / "media",
+            )
+            if tuple(scenario.id for scenario in catalog.values()) != SCENARIO_IDS:
+                raise RuntimeError("scenario order does not match the booth contract")
+            stage_count = 0
+            for scenario in catalog.values():
+                if not scenario.stages or not scenario.zones or not scenario.ticker:
+                    raise RuntimeError(f"scenario {scenario.id} is incomplete")
+                media_path = catalog.media_path(scenario.id, camera_index=None)
+                if media_path is None or not media_path.is_file():
+                    raise RuntimeError(f"scenario {scenario.id} media is missing")
+                stage_count += len(scenario.stages)
+            return f"4 ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
+
+        _selftest_check(checks, "Phase 3 local inventory", phase3_local_inventory_check)
     finally:
         socket.socket.connect = original_connect  # type: ignore[method-assign]
         socket.socket.connect_ex = original_connect_ex  # type: ignore[method-assign]
@@ -265,9 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scenario",
-        choices=("retail",),
+        choices=SCENARIO_IDS,
         default="retail",
-        help="Phases 1-2 implement the retail reference scenario",
+        help="initial vertical",
     )
     parser.add_argument(
         "--device",
@@ -303,6 +333,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="diagnostic: toggle GPU after this many seconds (0 disables the scheduled action)",
     )
     parser.add_argument(
+        "--switch-to",
+        choices=SCENARIO_IDS,
+        default=None,
+        help="scenario used by --scenario-switch-after",
+    )
+    parser.add_argument(
+        "--scenario-switch-after",
+        type=float,
+        default=0.0,
+        help="diagnostic: switch to --switch-to after this many seconds",
+    )
+    parser.add_argument(
+        "--attract",
+        action="store_true",
+        help="start in deterministic no-gauge attract mode",
+    )
+    parser.add_argument(
         "--force-availability",
         action="store_true",
         help="diagnostic: ignore the fingerprinted DeviceAvailability cache",
@@ -327,12 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _source_details(value: str) -> tuple[Path | None, int | None, str]:
+def _camera_index(value: str) -> int | None:
     if value == "loop":
-        video = ROOT / "media" / "store-aisle-detection.mp4"
-        if not video.is_file():
-            raise FileNotFoundError(f"retail video is missing: {video}")
-        return video, None, f"LOOP · {video.name}"
+        return None
     if value.startswith("camera:"):
         try:
             index = int(value.split(":", 1)[1])
@@ -340,7 +384,7 @@ def _source_details(value: str) -> tuple[Path | None, int | None, str]:
             raise ValueError("camera source must be camera:<index>") from exc
         if index < 0:
             raise ValueError("camera index must be non-negative")
-        return None, index, f"LIVE CAMERA · index {index}"
+        return index
     raise ValueError("source must be loop or camera:<index>")
 
 
@@ -408,18 +452,58 @@ def _run_availability_gate(*, force: bool) -> AvailabilityMatrix:
     return matrix
 
 
+def _prewarm_scenarios(
+    registry: ScenarioModelRegistry,
+    catalog: ScenarioCatalog,
+    availability: AvailabilityMatrix,
+) -> list[str]:
+    model_ids = {
+        stage.model_id
+        for scenario in catalog.values()
+        for stage in scenario.inference_stages
+    }
+    progress = QProgressDialog(
+        "Precompiling enabled scenario models…",
+        "",
+        0,
+        max(1, len(model_ids) * 2),
+    )
+    progress.setWindowTitle("Engine Lab — scenario compiler")
+    progress.setCancelButton(None)
+    progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+    progress.setMinimumDuration(0)
+    progress.show()
+    fallbacks = registry.prewarm(
+        catalog,
+        availability,
+        progress=lambda value, text: (
+            progress.setValue(value),
+            progress.setLabelText(text),
+            QApplication.processEvents(),
+        ),
+    )
+    progress.close()
+    return fallbacks
+
+
 def _run_application(args: argparse.Namespace) -> int:
-    video_path, camera_index, source_description = _source_details(args.source)
+    startup_origin = time.perf_counter()
+    camera_index = _camera_index(args.source)
     if args.exit_after < 0:
         raise ValueError("--exit-after cannot be negative")
     for name, value in (
         ("--npu-toggle-after", args.npu_toggle_after),
         ("--gpu-toggle-after", args.gpu_toggle_after),
+        ("--scenario-switch-after", args.scenario_switch_after),
     ):
         if value < 0:
             raise ValueError(f"{name} cannot be negative")
         if value and (args.exit_after <= 0 or value >= args.exit_after):
             raise ValueError(f"{name} requires --exit-after greater than the action time")
+    if args.scenario_switch_after and args.switch_to is None:
+        raise ValueError("--scenario-switch-after requires --switch-to")
+    if args.scenario_switch_after and args.switch_to == args.scenario:
+        raise ValueError("--switch-to must differ from the initial --scenario")
     if args.screenshot is not None and args.exit_after <= 0:
         raise ValueError("--screenshot requires --exit-after")
 
@@ -428,20 +512,41 @@ def _run_application(args: argparse.Namespace) -> int:
     application.setOrganizationName("Engine Lab")
     application.setStyle("Fusion")
     availability = _run_availability_gate(force=args.force_availability)
+    catalog = load_scenario_catalog(
+        REQUIRED_SCENARIOS,
+        REQUIRED_CONFIG,
+        ROOT / "media",
+    )
+    registry = ScenarioModelRegistry(
+        REQUIRED_CONFIG,
+        ROOT / "models",
+        ROOT / "cache",
+    )
+    prewarm_fallbacks = _prewarm_scenarios(registry, catalog, availability)
     initial_mode = DeviceMode(args.mode) if args.mode is not None else None
+    if args.device is not None and initial_mode is None:
+        initial_mode = {
+            "NPU": DeviceMode.NPU_ONLY,
+            "GPU": DeviceMode.GPU_ONLY,
+            "CPU": DeviceMode.CPU_ONLY,
+        }[args.device]
     window = MainWindow(
-        source_description=source_description,
-        video_path=video_path,
+        catalog=catalog,
+        registry=registry,
+        initial_scenario=args.scenario,
         camera_index=camera_index,
         cache_dir=ROOT / "cache",
         telemetry_map_path=TELEMETRY_MAP,
+        profiles_path=REQUIRED_PROFILES,
         availability=availability,
+        prewarm_fallbacks=prewarm_fallbacks,
         fullscreen=args.fullscreen,
-        initial_device=args.device,
         initial_mode=initial_mode,
         initial_density=args.density,
         npu_enabled=not args.npu_off,
         gpu_enabled=not args.gpu_off,
+        attract_mode=args.attract,
+        startup_origin_perf=startup_origin,
     )
     window.start()
     if args.npu_toggle_after:
@@ -454,11 +559,17 @@ def _run_application(args: argparse.Namespace) -> int:
             round(args.gpu_toggle_after * 1000.0),
             window.toggle_gpu,
         )
+    if args.scenario_switch_after:
+        QTimer.singleShot(
+            round(args.scenario_switch_after * 1000.0),
+            lambda: window.switch_scenario(args.switch_to, reason="scheduled"),
+        )
 
     diagnostic_path = args.diagnostic_output
     if diagnostic_path is None and args.exit_after > 0:
-        mode_name = (initial_mode.value if initial_mode is not None else (args.device.lower() if args.device else "spread"))
-        diagnostic_path = Path("logs") / f"phase2-{mode_name}-d{args.density}.json"
+        mode_name = initial_mode.value if initial_mode is not None else "spread"
+        suffix = "-attract" if args.attract else ""
+        diagnostic_path = Path("logs") / f"phase3-{args.scenario}-{mode_name}-d{args.density}{suffix}.json"
     snapshot_written = False
 
     def write_snapshot() -> None:
@@ -496,7 +607,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     LOGGER.info(
         "Engine Lab started source=%s scenario=%s device=%s mode=%s density=%s "
-        "npu_off=%s gpu_off=%s npu_toggle_after=%s gpu_toggle_after=%s selftest=%s",
+        "npu_off=%s gpu_off=%s npu_toggle_after=%s gpu_toggle_after=%s "
+        "switch_to=%s scenario_switch_after=%s attract=%s selftest=%s",
         args.source,
         args.scenario,
         args.device,
@@ -506,6 +618,9 @@ def main(argv: list[str] | None = None) -> int:
         args.gpu_off,
         args.npu_toggle_after,
         args.gpu_toggle_after,
+        args.switch_to,
+        args.scenario_switch_after,
+        args.attract,
         args.selftest,
     )
     if args.selftest:

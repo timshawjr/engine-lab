@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "retail",
+      "title": "Retail / POS",
+      "vertical": "Retail / loss prevention",
+      "business_line": "Self-checkout and loss prevention: detect the item, classify it, log the event — all on one SoC.",
+      "video_id": "retail_aisle",
+      "stages": [
+        {
+          "stage": "detector",
+          "model_id": "yolo11n-fp16",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "classifier",
+          "model_id": "efficientnet-b0-fp16",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "zone_event",
+          "model_id": "yolo11n-fp16",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "left_shelf",
+          "roi": [0.0, 0.18, 0.42, 0.52],
+          "kind": "shelf"
+        },
+        {
+          "name": "right_shelf",
+          "roi": [0.58, 0.18, 0.42, 0.52],
+          "kind": "shelf"
+        },
+        {
+          "name": "checkout",
+          "roi": [0.34, 0.62, 0.32, 0.38],
+          "kind": "checkout"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.30,
+        "iou_threshold": 0.45,
+        "max_detections": 100,
+        "tracking_iou_threshold": 0.10,
+        "track_persist_s": 1.0,
+        "event_cooldown_s": 1.0,
+        "count_dwell_s": 0.40,
+        "picked_up_dwell_s": 0.60,
+        "classify_top_k": 3,
+        "classification_min": 0.15
+      },
+      "ticker": [
+        "Detect the item at the shelf",
+        "Classify the top product candidates",
+        "Log the retail event on-device",
+        "One SoC, three explicit engines"
+      ]
+    },
+    {
+      "id": "smart_city",
+      "title": "Smart City / Traffic",
+      "vertical": "Intersection analytics",
+      "business_line": "Intersection analytics at the edge: vehicle and pedestrian counting without a server.",
+      "video_id": "traffic",
+      "stages": [
+        {
+          "stage": "detector",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "classifier",
+          "model_id": "efficientnet-b0-fp16",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "zone_event",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "incoming_lane",
+          "roi": [0.02, 0.08, 0.24, 0.84],
+          "kind": "vehicle_entry"
+        },
+        {
+          "name": "crosswalk",
+          "roi": [0.38, 0.0, 0.24, 1.0],
+          "kind": "person_entry"
+        },
+        {
+          "name": "outgoing_lane",
+          "roi": [0.74, 0.08, 0.24, 0.84],
+          "kind": "vehicle_exit"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.30,
+        "iou_threshold": 0.40,
+        "max_detections": 100,
+        "count_dwell_s": 0.40,
+        "track_persist_s": 1.0,
+        "event_cooldown_s": 1.0,
+        "classify_top_k": 2,
+        "classification_min": 0.12
+      },
+      "ticker": [
+        "Detect vehicles, bicycles, and people",
+        "Count entries and exits by zone",
+        "Classify active tracks at the edge",
+        "No server round-trip"
+      ]
+    },
+    {
+      "id": "medical",
+      "title": "Medical / Eldercare",
+      "vertical": "Patient monitoring",
+      "business_line": "Patient monitoring and fall detection on-device: no video leaves the room.",
+      "video_id": "people_queue",
+      "stages": [
+        {
+          "stage": "person_detector",
+          "model_id": "person-detection-retail-0013",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "pose",
+          "model_id": "human-pose-estimation-0001",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "posture_event",
+          "model_id": "human-pose-estimation-0001",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "queue_lane",
+          "roi": [0.30, 0.0, 0.40, 1.0],
+          "kind": "person_entry"
+        },
+        {
+          "name": "monitoring_zone",
+          "roi": [0.18, 0.20, 0.64, 0.80],
+          "kind": "fall_monitor"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.30,
+        "iou_threshold": 0.40,
+        "max_detections": 100,
+        "count_dwell_s": 0.40,
+        "track_persist_s": 1.0,
+        "pose_keypoint_threshold": 0.30,
+        "fall_angle_deg": 55.0,
+        "posture_dwell_s": 0.80,
+        "event_cooldown_s": 4.0
+      },
+      "ticker": [
+        "Detect each person locally",
+        "Estimate pose entirely on-device",
+        "Watch torso geometry for a posture alert",
+        "No video leaves the room"
+      ]
+    },
+    {
+      "id": "gov_defense",
+      "title": "Government / Defense",
+      "vertical": "Perimeter analytics",
+      "business_line": "Multi-camera perimeter on one platform: stream density is the metric, not TOPS.",
+      "video_id": "street_cars",
+      "stages": [
+        {
+          "stage": "perimeter_detector",
+          "model_id": "person-detection-retail-0013",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "plate_detector",
+          "model_id": "vehicle-license-plate-detection-barrier-0106",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "track_event",
+          "model_id": "vehicle-license-plate-detection-barrier-0106",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "perimeter",
+          "roi": [0.0, 0.0, 1.0, 1.0],
+          "kind": "perimeter"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.20,
+        "iou_threshold": 0.35,
+        "max_detections": 100,
+        "tracking_iou_threshold": 0.30,
+        "count_dwell_s": 0.40,
+        "track_persist_s": 0.50,
+        "plate_confidence_min": 0.20,
+        "event_cooldown_s": 1.0
+      },
+      "ticker": [
+        "Run independent perimeter streams",
+        "Detect people and license plates",
+        "Persist tracks by measured IoU",
+        "Density is the metric—not a synthetic TOPS claim"
+      ]
+    }
+  ]
+}

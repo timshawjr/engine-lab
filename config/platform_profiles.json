@@ -13,6 +13,8 @@
       "match": [
         "Core Ultra 200V",
         "Core Ultra 2xxV",
+        "Core Ultra 9 288V",
+        "Ultra 9 288V",
         "Lunar Lake",
         "Xe2"
       ],

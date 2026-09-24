@@ -612,7 +612,7 @@ def _phase1_runtime_checks(report: Preflight, core: ov.Core, available: set[str]
             )
 
 
-def _availability_check(report: Preflight) -> None:
+def _availability_check(report: Preflight) -> Any | None:
     from app.engine.availability import DEVICES as AVAILABILITY_DEVICES
     from app.engine.availability import probe_device_availability
 
@@ -626,7 +626,7 @@ def _availability_check(report: Preflight) -> None:
             f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500],
             "Restore the model files, cache write permission, and pinned OpenVINO runtime",
         )
-        return
+        return None
     expected = len(matrix.models) * len(AVAILABILITY_DEVICES)
     actual = sum(len(model.devices) for model in matrix.models.values())
     successful = sum(
@@ -645,6 +645,168 @@ def _availability_check(report: Preflight) -> None:
             f"results={successful}/{expected} successful; devices={list(matrix.available_devices)}"
         ),
         "Inspect logs/availability.log and the F1 operator matrix; never hide a per-model failure",
+    )
+    return matrix
+
+
+def _phase3_scenario_checks(
+    report: Preflight,
+    availability: Any,
+) -> None:
+    from app.engine.pipelines import ScenarioModelRegistry, load_scenario_catalog
+
+    expected_ids = ("retail", "smart_city", "medical", "gov_defense")
+    try:
+        catalog = load_scenario_catalog(
+            ROOT / "config" / "scenarios.json",
+            MODELS_CONFIG,
+            ROOT / "media",
+        )
+        registry = ScenarioModelRegistry(MODELS_CONFIG, ROOT / "models", CACHE_DIR)
+    except Exception as exc:
+        for scenario_id in expected_ids:
+            report.add(
+                "phase 3 scenario",
+                scenario_id,
+                "FAIL",
+                f"{type(exc).__name__}: {exc}",
+                "Restore config/scenarios.json and the verified model/media inventory",
+            )
+        return
+    actual_ids = tuple(scenario.id for scenario in catalog.values())
+    if actual_ids != expected_ids:
+        report.add(
+            "phase 3 scenario",
+            "ordered scenario catalog",
+            "FAIL",
+            f"expected {expected_ids}, found {actual_ids}",
+            "Restore deterministic scenario order retail, smart_city, medical, gov_defense",
+        )
+    for scenario in catalog.values():
+        fallback_devices: list[str] = []
+        try:
+            media = catalog.media_path(scenario.id, camera_index=None)
+            if media is None or not media.is_file():
+                raise FileNotFoundError(f"missing media {media}")
+            if not scenario.event_rules or not scenario.ticker:
+                raise ValueError("event rules and ticker copy are required")
+            required_rules = {
+                "retail": {"confidence_min", "iou_threshold", "picked_up_dwell_s"},
+                "smart_city": {"confidence_min", "count_dwell_s"},
+                "medical": {"confidence_min", "fall_angle_deg", "posture_dwell_s"},
+                "gov_defense": {"confidence_min", "plate_confidence_min"},
+            }[scenario.id]
+            missing_rules = sorted(required_rules - set(scenario.event_rules))
+            if missing_rules:
+                raise ValueError(f"missing event rules: {missing_rules}")
+            for stage in scenario.inference_stages:
+                bundle = registry.bundle(stage.model_id)
+                if not bundle.model_path.is_file():
+                    raise FileNotFoundError(f"missing model {bundle.model_path}")
+                if not availability.supports(stage.model_id, stage.device_pref):
+                    if not availability.supports(stage.model_id, "CPU"):
+                        raise RuntimeError(
+                            f"{stage.model_id} is unavailable on {stage.device_pref} and CPU"
+                        )
+                    fallback_devices.append(f"{stage.stage}→CPU")
+            for zone in scenario.zones:
+                x, y, width, height = zone.roi
+                if min(x, y, width, height) < 0.0 or x + width > 1.0 or y + height > 1.0:
+                    raise ValueError(f"zone {zone.name} is outside normalized bounds")
+            detail = (
+                f"video={scenario.video_id}; stages={len(scenario.stages)}; "
+                f"zones={len(scenario.zones)}; ticker={len(scenario.ticker)}"
+            )
+            if fallback_devices:
+                detail += "; explicit CPU fallback=" + ",".join(fallback_devices)
+            report.add("phase 3 scenario", scenario.id, "PASS", detail)
+        except Exception as exc:
+            report.add(
+                "phase 3 scenario",
+                scenario.id,
+                "FAIL",
+                f"{type(exc).__name__}: {exc}",
+                "Restore the scenario graph and its verified models/media; never hide fallback",
+            )
+
+
+def _phase3_delivery_checks(report: Preflight) -> None:
+    telemetry = json.loads(TELEMETRY_MAP.read_text(encoding="utf-8"))
+    hud_source = (ROOT / "app" / "hud.py").read_text(encoding="utf-8")
+    theme_source = (ROOT / "app" / "theme.py").read_text(encoding="utf-8")
+    forbidden_metric_literals = (
+        "np.percentile(samples, 50)",
+        "np.percentile(samples, 95)",
+        "np.percentile(latencies, 50)",
+        "np.percentile(latencies, 95)",
+        "value / 100.0",
+        "min(100.0, value)",
+    )
+    metric_literals_clear = not any(
+        literal in hud_source for literal in forbidden_metric_literals
+    )
+    required_theme_tokens = (
+        "percentile_p50",
+        "percentile_p95",
+        "gauge_max_percent",
+        "streams_real_time_fraction",
+    )
+    theme_tokens_present = all(token in theme_source for token in required_theme_tokens)
+    telemetry_declared = (
+        telemetry.get("counter_source") == "pdh_gpu_engine"
+        and telemetry.get("fallback") == "npu_duty_cycle"
+    )
+    status = "PASS" if metric_literals_clear and theme_tokens_present and telemetry_declared else "FAIL"
+    report.add(
+        "phase 3 honesty",
+        "HUD metric traceability",
+        status,
+        (
+            f"counter_source={telemetry.get('counter_source')}; "
+            f"fallback={telemetry.get('fallback')}; "
+            f"theme_tokens={theme_tokens_present}; forbidden_literals={not metric_literals_clear}"
+        ),
+        "Keep measured metric scales/windows in theme.py or config; never hardcode a displayed value",
+    )
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+    required_runbook_terms = (
+        "pre-show checklist",
+        "task manager cross-check",
+        "npu compiled yesterday but not today",
+        "smart_city",
+        "gov_defense",
+        "attract",
+    )
+    runbook_ok = all(term in readme for term in required_runbook_terms)
+    report.add(
+        "phase 3 delivery",
+        "README booth run-book",
+        "PASS" if runbook_ok else "FAIL",
+        f"required sections/commands present={runbook_ok}",
+        "Restore the Phase 3 pre-show checklist, key map, recovery, and exact scenario commands",
+    )
+
+    launcher = (ROOT / "run_demo.bat").read_text(encoding="utf-8").lower()
+    launcher_ok = all(
+        token in launcher for token in ("pythonw.exe", "--fullscreen", "--scenario retail")
+    )
+    report.add(
+        "phase 3 delivery",
+        "one-click launcher",
+        "PASS" if launcher_ok else "FAIL",
+        f"pythonw/fullscreen/default-scenario tokens present={launcher_ok}",
+        "Keep run_demo.bat as the no-console fullscreen entry point",
+    )
+
+    benchmark = ROOT / "tools" / "benchmark_matrix.py"
+    benchmark_ok = benchmark.is_file() and "attract-d4" in benchmark.read_text(encoding="utf-8")
+    report.add(
+        "phase 3 delivery",
+        "benchmark matrix tool",
+        "PASS" if benchmark_ok else "FAIL",
+        f"benchmark tool present={benchmark.is_file()}; attract run declared={benchmark_ok}",
+        "Restore tools/benchmark_matrix.py and its full scenario/density matrix",
     )
 
 
@@ -784,7 +946,10 @@ def main(argv: list[str] | None = None) -> int:
         report.add("compile", "matrix", "WARN", "skipped by explicit --skip-compile", "Run without this switch for phase exit verification")
     else:
         _model_and_compile_checks(report, config, core, available)
-        _availability_check(report)
+        availability_matrix = _availability_check(report)
+        if availability_matrix is not None:
+            _phase3_scenario_checks(report, availability_matrix)
+    _phase3_delivery_checks(report)
     _phase1_runtime_checks(report, core, available)
 
     report.print()

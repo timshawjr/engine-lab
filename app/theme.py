@@ -30,6 +30,9 @@ class Theme:
     font_title: int = 34
     font_badge: int = 18
     font_overlay: int = 22
+    attract_title_font: int = 72
+    attract_subtitle_font: int = 36
+    attract_business_font: int = 28
 
     radius_small: int = 8
     radius_panel: int = 14
@@ -48,11 +51,25 @@ class Theme:
     design_width: int = 1920
     design_height: int = 1080
     tile_display_fps: int = 30
+    telemetry_interval_seconds: float = 0.2
+    ticker_seconds: int = 8
+    attract_scenario_seconds: int = 12
     stream_rate_window_seconds: float = 2.0
     telemetry_recent_seconds: float = 2.0
+    metric_window_seconds: float = 10.0
+    sparkline_window_seconds: float = 60.0
+    rss_sample_seconds: float = 5.0
+    gauge_max_percent: float = 100.0
+    percentile_p50: float = 50.0
+    percentile_p95: float = 95.0
+    clock_interval_ms: int = 1000
+    operator_log_lines: int = 20
+    operator_event_lines: int = 100
+    bytes_per_mib: int = 1024 * 1024
     streams_real_time_fraction: float = 0.90
-    single_tile_row_max_height: int = 150
-    multi_tile_row_max_height: int = 270
+    real_time_equivalent_cap: float = 1.0
+    single_tile_row_max_height: int = 210
+    multi_tile_row_max_height: int = 310
 
 
 THEME = Theme()
