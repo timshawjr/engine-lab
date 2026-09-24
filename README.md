@@ -7,14 +7,16 @@ as missing; no synthetic load or fallback zeros are used.
 
 ## Phase status
 
-Phase 0 is complete: the repo-local environment, source verification, model/media downloader,
-Windows SetupAPI device discovery, PDH GPU Engine telemetry probe, and booth preflight are working.
-The final cold-cache preflight passed 77/77 rows. The Qt inference HUD and OpenVINO runner are
-intentionally not present yet; they begin in Phase 1. Do not use this checkpoint as the booth
-application.
+Phases 0 and 1 are complete. The repo-local environment, verified downloads, SetupAPI/PDH telemetry,
+OpenVINO runner, retail YOLO11n FP16 pipeline, and Qt HUD are working. Phase 1 ran the same static-shape
+model on explicit NPU, GPU, and CPU targets and verified placement from `EXECUTION_DEVICES`; the
+measured screenshots and raw samples are recorded in `bench_report.md` and `logs/phase1-*.json`.
 
-The measured Phase 0 environment is recorded in `bench_report.md`. Raw command logs are under
-`logs/` on the demo machine.
+Phase 1 intentionally has one stream, no device toggles, and no density control. Those are Phase 2
+features and are not simulated in the current UI.
+
+The measured environment and Phase 1 results are recorded in `bench_report.md`. Raw command
+logs and per-device diagnostic samples are under `logs/` on the demo machine.
 
 ## What was installed on this machine
 
@@ -65,8 +67,45 @@ SHA-256 inventory to `models/download_manifest.json`. Hugging Face label metadat
 `--allow-fallback` is explicitly supplied. The app-measured NPU fallback is always declared in the
 map and must be labelled in the future HUD.
 
-`preflight.py` is the Phase 0 exit gate. Do not use `--skip-compile` for phase verification; that
-switch is only for local development while iterating on the checker.
+`preflight.py` is the phase exit gate. Do not use `--skip-compile` for phase verification; that
+switch is only for local development while iterating on the checker. Phase 1 adds one real
+retail-frame inference row for each of NPU, GPU, and CPU and asserts CPU `NUM_STREAMS` equals the
+eight physical cores reported by the machine.
+
+## Run the Phase 1 retail demo
+
+The one-click wrapper starts the NPU path fullscreen with no console window:
+
+```cmd
+cd C:\dev\engine-lab
+run_demo.bat
+```
+
+The equivalent explicit commands are:
+
+```cmd
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail --device NPU --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail --device GPU --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail --device CPU --fullscreen
+```
+
+Phase 1 keys are `Q` or `Esc` to quit and `F11` to toggle fullscreen. Device selection is a startup
+argument; there are no Phase 2 toggle or density controls yet. The camera variant remains opt-in:
+
+```cmd
+.venv\Scripts\python.exe -m app.main --source camera:0 --device NPU --fullscreen
+```
+
+For an auditable measured run, `--exit-after`, `--screenshot`, and `--diagnostic-output` write the
+raw frame/telemetry samples after the requested interval:
+
+```cmd
+.venv\Scripts\python.exe -m app.main --device NPU --exit-after 10 ^
+  --screenshot logs\phase1-npu.png --diagnostic-output logs\phase1-npu.json
+```
+
+The app reads no network resource at runtime. `python -m app.main --selftest` explicitly blocks
+outbound Python sockets while checking the local model, labels, telemetry map, and UI invariants.
 
 ## Verified model-shape correction
 
@@ -148,5 +187,5 @@ Before visitors arrive:
 - Run the full preflight after the final reboot.
 - Keep Wi-Fi disabled during the demo to prove runtime operation is local.
 
-The booth launch wrapper and scenario commands are delivered with the runnable application in
-Phase 1/Phase 3; this Phase 0 checkpoint intentionally has no booth-mode claims or synthetic HUD.
+The current checkpoint is the measured one-stream Phase 1 retail demo. Device toggles, stream
+density, attract mode, and the other verticals remain intentionally absent until their phases.

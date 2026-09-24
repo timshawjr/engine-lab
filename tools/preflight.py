@@ -481,6 +481,113 @@ def _model_and_compile_checks(report: Preflight, config: dict[str, Any], core: o
                 )
 
 
+def _phase1_runtime_checks(report: Preflight, core: ov.Core, available: set[str]) -> None:
+    from app.engine.stages import load_preprocess_config, model_input_size, preprocess_yolo
+
+    model_path = ROOT / "models" / "yolo11n-fp16" / "yolo11n.xml"
+    video_path = ROOT / "media" / "store-aisle-detection.mp4"
+    if not model_path.is_file() or not video_path.is_file():
+        report.add(
+            "phase 1 runtime",
+            "YOLO11n retail inputs",
+            "FAIL",
+            "model or retail video is missing",
+            "Run tools/download_models.py",
+        )
+        return
+    capture = cv2.VideoCapture(str(video_path))
+    ok, frame = capture.read()
+    capture.release()
+    if not ok or frame is None:
+        report.add(
+            "phase 1 runtime",
+            "YOLO11n retail inputs",
+            "FAIL",
+            "retail video did not decode a frame",
+            "Re-run tools/download_models.py and tools/preflight.py",
+        )
+        return
+    try:
+        model = core.read_model(str(model_path))
+        model_height, model_width = model_input_size(model)
+        preprocessed = preprocess_yolo(
+            frame,
+            model_width=model_width,
+            model_height=model_height,
+            metadata=load_preprocess_config(ROOT / "models" / "yolo11n-fp16" / "source_config.json"),
+        )
+    except Exception as exc:
+        report.add(
+            "phase 1 runtime",
+            "YOLO11n retail input",
+            "FAIL",
+            f"{type(exc).__name__}: {exc}",
+            "Restore the pinned YOLO11n FP16 model and its source preprocessing metadata",
+        )
+        return
+
+    physical_cores = None
+    try:
+        import psutil
+
+        physical_cores = psutil.cpu_count(logical=False)
+    except Exception:
+        physical_cores = None
+    for device in DEVICES:
+        if device not in available:
+            report.add(
+                "phase 1 runtime",
+                f"YOLO11n inference on {device}",
+                "FAIL",
+                "device unavailable",
+                "Install the matching Intel driver and reboot",
+            )
+            continue
+        config: dict[str, Any] = {
+            "CACHE_DIR": str(CACHE_DIR),
+            "PERFORMANCE_HINT": "LATENCY",
+        }
+        if device == "CPU":
+            config["PERFORMANCE_HINT"] = "THROUGHPUT"
+            config["NUM_STREAMS"] = physical_cores or 1
+        try:
+            compile_started = time.perf_counter()
+            compiled = core.compile_model(model, device, config)
+            compile_ms = (time.perf_counter() - compile_started) * 1000.0
+            inference_started = time.perf_counter()
+            output = compiled(preprocessed.tensor)
+            inference_ms = (time.perf_counter() - inference_started) * 1000.0
+            raw_devices = compiled.get_property("EXECUTION_DEVICES")
+            devices = [raw_devices] if isinstance(raw_devices, str) else [str(item) for item in raw_devices]
+            roots = {item.upper().split(".", 1)[0] for item in devices}
+            placement_ok = roots == {device}
+            detail = (
+                f"one real retail-frame inference in {inference_ms:.2f} ms "
+                f"(compile {compile_ms:.2f} ms); EXECUTION_DEVICES={devices}"
+            )
+            if device == "CPU":
+                stream_count = compiled.get_property("NUM_STREAMS")
+                detail += f"; NUM_STREAMS={stream_count} (physical cores={physical_cores})"
+                streams_ok = int(stream_count) == int(physical_cores or 1)
+            else:
+                streams_ok = True
+            report.add(
+                "phase 1 runtime",
+                f"YOLO11n inference on {device}",
+                "PASS" if placement_ok and streams_ok and output is not None else "FAIL",
+                detail,
+                "Use EXECUTION_DEVICES as placement proof and preserve physical-core CPU streams",
+            )
+        except Exception as exc:
+            report.add(
+                "phase 1 runtime",
+                f"YOLO11n inference on {device}",
+                "FAIL",
+                f"{type(exc).__name__}: {exc}".replace("\n", " ")[:500],
+                "Fix the device/driver/model runtime error; Phase 1 requires one inference on every device",
+            )
+
+
 def _video_checks(report: Preflight, config: dict[str, Any]) -> None:
     for media in config["media"]:
         path = ROOT / "media" / media["file"]
@@ -617,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
         report.add("compile", "matrix", "WARN", "skipped by explicit --skip-compile", "Run without this switch for phase exit verification")
     else:
         _model_and_compile_checks(report, config, core, available)
+    _phase1_runtime_checks(report, core, available)
 
     report.print()
     _write_results(report)

@@ -139,3 +139,72 @@ After any future Intel NPU or graphics driver update:
 5. Rerun `python -m app.main --selftest`.
 
 Phase 0 passed this sequence after the NPU driver update on 2026-09-24.
+
+---
+
+## Phase 1 — one stream, one model, three devices
+
+**Status: COMPLETE.** The retail reference path runs the pinned `yolo11n-fp16` IR on the looping
+`retail_aisle` video. It uses the actual static `[1,3,640,640]` IR shape, CPU letterbox/resize/NMS,
+OpenVINO `AsyncInferQueue`, Qt video/overlay rendering, and 5 Hz telemetry sampling. No device toggle,
+density control, attract mode, or synthetic value is present in this phase.
+
+### Exit-criteria evidence
+
+- The same YOLO11n FP16 model ran for approximately 10 seconds on each explicit device.
+- `EXECUTION_DEVICES` was `NPU`, `GPU.0`, and `CPU` respectively; the UI badge is derived from that
+  property, not from the requested string.
+- The selected-device gauge was visibly non-zero in every Windows-rendered screenshot:
+  `logs/phase1-npu.png`, `logs/phase1-gpu.png`, and `logs/phase1-cpu.png`.
+- Raw frame and telemetry samples are in `logs/phase1-npu.json`, `logs/phase1-gpu.json`, and
+  `logs/phase1-cpu.json` on the demo machine.
+- Final Phase 1 preflight: **80 PASS, 0 WARN, 0 FAIL**. It includes one real retail-frame inference
+  on every device and verifies CPU `NUM_STREAMS=8` equals the 8 physical cores. The Phase 0 table
+  above contains the first 77 rows; these are the three added Phase 1 rows:
+
+| Status | Category | Check | Detail |
+|---|---|---|---|
+| PASS | phase 1 runtime | YOLO11n inference on NPU | 11.17 ms; `EXECUTION_DEVICES=['NPU']` |
+| PASS | phase 1 runtime | YOLO11n inference on GPU | 8.53 ms; `EXECUTION_DEVICES=['GPU.0']` |
+| PASS | phase 1 runtime | YOLO11n inference on CPU | 64.35 ms; `EXECUTION_DEVICES=['CPU']`; `NUM_STREAMS=8`, physical cores=8 |
+
+| Summary | Rows |
+|---|---:|
+| PASS | 80 |
+| WARN | 0 |
+| FAIL | 0 |
+
+- Local-only self-test: **9 PASS, 0 FAIL** with outbound Python sockets blocked.
+- Source verification: **40 PASS, 0 FAIL**.
+
+### Measured 10-second single-stream results
+
+Source video: 720x404, 59.940 FPS. Latency percentiles use the raw per-frame samples in each JSON
+file. FPS is measured processing throughput; gauge maximum is the maximum measured 5 Hz sample in
+that run. These are real machine results, not reference targets.
+
+| Device | Placement proof | Inference p50 / p95 | End-to-end p50 / p95 | Processing FPS mean | Selected gauge max |
+|---|---|---:|---:|---:|---:|
+| NPU | `EXECUTION_DEVICES=['NPU']` | 6.172 / 6.640 ms | 15.110 / 17.784 ms | 50.372 | NPU 27.67% |
+| GPU | `EXECUTION_DEVICES=['GPU.0']` | 4.220 / 4.806 ms | 12.684 / 13.798 ms | 59.776 | GPU 57.11% |
+| CPU | `EXECUTION_DEVICES=['CPU']` | 69.212 / 142.178 ms | 82.110 / 151.256 ms | 9.215 | CPU 56.00% |
+
+Frames measured: NPU 498 over 9.851 s; GPU 554 over 9.244 s; CPU 89 over 9.687 s.
+The CPU run used `NUM_STREAMS=8`, matching `psutil.cpu_count(logical=False)`. The NPU gauge source was
+PDH `GPU Engine` → this process → busiest `Neural` engine. The GPU gauge used the same PDH mechanism
+for this process's busiest engine. CPU was measured system-wide with psutil. Unselected engines show
+`NO SAMPLE`, not a fabricated zero.
+
+### Phase 1 commands
+
+```text
+.venv\Scripts\python.exe -m app.main --device NPU --exit-after 10 --screenshot logs\phase1-npu.png --diagnostic-output logs\phase1-npu.json
+.venv\Scripts\python.exe -m app.main --device GPU --exit-after 10 --screenshot logs\phase1-gpu.png --diagnostic-output logs\phase1-gpu.json
+.venv\Scripts\python.exe -m app.main --device CPU --exit-after 10 --screenshot logs\phase1-cpu.png --diagnostic-output logs\phase1-cpu.json
+.venv\Scripts\python.exe -m app.main --selftest
+.venv\Scripts\python.exe tools\preflight.py
+```
+
+The interactive one-click command is `run_demo.bat`. A diagnostic wrapper smoke run produced 140 NPU
+frames with `EXECUTION_DEVICES=['NPU']` and no application error. `Q`/`Esc` quits and `F11` toggles
+fullscreen.

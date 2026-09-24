@@ -1,8 +1,4 @@
-"""Engine Lab entry point.
-
-Phase 0 provides the setup/preflight entry point and a local-only self-test.
-The booth UI and inference runner are introduced in later phases.
-"""
+"""Engine Lab application entry point."""
 
 from __future__ import annotations
 
@@ -16,6 +12,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+
+from app.hud import MainWindow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -192,6 +193,28 @@ def _selftest() -> int:
             return f"provider={telemetry['counter_source']}, NPU instances={sum(i.get('device') == 'NPU' for i in telemetry['instances'])}"
 
         _selftest_check(checks, "telemetry map", telemetry_check)
+
+        def phase1_inventory_check() -> str:
+            import openvino
+
+            from app.engine.stages import load_labels, model_input_size
+            from app.theme import THEME
+
+            model_path = ROOT / "models" / "yolo11n-fp16" / "yolo11n.xml"
+            model = openvino.Core().read_model(str(model_path))
+            input_size = model_input_size(model)
+            labels = load_labels(model_path.with_name("labels.txt"))
+            if input_size != (640, 640):
+                raise RuntimeError(f"unexpected Phase 1 input size: {input_size}")
+            engine_pixels_at_96_dpi = round(THEME.font_engine_value * 96 / 72)
+            if len(labels) != 80 or engine_pixels_at_96_dpi < 96:
+                raise RuntimeError(
+                    f"Phase 1 UI/model invariant failed: labels={len(labels)}, "
+                    f"engine_font={THEME.font_engine_value}pt/{engine_pixels_at_96_dpi}px"
+                )
+            return f"YOLO11n static input={input_size}, labels={len(labels)}, 1920x1080 theme ready"
+
+        _selftest_check(checks, "Phase 1 local inventory", phase1_inventory_check)
     finally:
         socket.socket.connect = original_connect  # type: ignore[method-assign]
         socket.socket.connect_ex = original_connect_ex  # type: ignore[method-assign]
@@ -207,7 +230,7 @@ def _selftest() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Engine Lab heterogeneous AI demo")
-    parser.add_argument("--selftest", action="store_true", help="run local-only Phase 0 checks")
+    parser.add_argument("--selftest", action="store_true", help="run local-only setup checks")
     parser.add_argument(
         "--source",
         default="loop",
@@ -215,24 +238,131 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scenario",
-        choices=("retail", "smart_city", "medical", "gov_defense"),
+        choices=("retail",),
         default="retail",
+        help="Phase 1 implements the retail reference scenario",
+    )
+    parser.add_argument(
+        "--device",
+        choices=("NPU", "GPU", "CPU"),
+        default="NPU",
+        help="explicit OpenVINO device; placement is verified with EXECUTION_DEVICES",
     )
     parser.add_argument("--fullscreen", action="store_true", help="run the booth UI fullscreen")
+    parser.add_argument(
+        "--exit-after",
+        type=float,
+        default=0.0,
+        help="diagnostic: exit after this many seconds (0 keeps the app running)",
+    )
+    parser.add_argument(
+        "--screenshot",
+        type=Path,
+        help="diagnostic: save a PNG before diagnostic exit",
+    )
+    parser.add_argument(
+        "--diagnostic-output",
+        type=Path,
+        help="diagnostic: write the final measured UI state as JSON",
+    )
     return parser
+
+
+def _source_details(value: str) -> tuple[Path | None, int | None, str]:
+    if value == "loop":
+        video = ROOT / "media" / "store-aisle-detection.mp4"
+        if not video.is_file():
+            raise FileNotFoundError(f"retail video is missing: {video}")
+        return video, None, f"LOOP · {video.name}"
+    if value.startswith("camera:"):
+        try:
+            index = int(value.split(":", 1)[1])
+        except ValueError as exc:
+            raise ValueError("camera source must be camera:<index>") from exc
+        if index < 0:
+            raise ValueError("camera index must be non-negative")
+        return None, index, f"LIVE CAMERA · index {index}"
+    raise ValueError("source must be loop or camera:<index>")
+
+
+def _write_diagnostic(path: Path, payload: dict) -> None:
+    path = path if path.is_absolute() else ROOT / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _run_application(args: argparse.Namespace) -> int:
+    video_path, camera_index, source_description = _source_details(args.source)
+    if args.exit_after < 0:
+        raise ValueError("--exit-after cannot be negative")
+    if args.screenshot is not None and args.exit_after <= 0:
+        raise ValueError("--screenshot requires --exit-after")
+
+    application = QApplication.instance() or QApplication([])
+    application.setApplicationName("Engine Lab")
+    application.setOrganizationName("Engine Lab")
+    application.setStyle("Fusion")
+    window = MainWindow(
+        device=args.device,
+        source_description=source_description,
+        video_path=video_path,
+        camera_index=camera_index,
+        cache_dir=ROOT / "cache",
+        telemetry_map_path=TELEMETRY_MAP,
+        fullscreen=args.fullscreen,
+    )
+    window.start()
+
+    diagnostic_path = args.diagnostic_output
+    if diagnostic_path is None and args.exit_after > 0:
+        diagnostic_path = Path("logs") / f"phase1-{args.device.lower()}.json"
+    snapshot_written = False
+
+    def write_snapshot() -> None:
+        nonlocal snapshot_written
+        if diagnostic_path is None or snapshot_written:
+            return
+        _write_diagnostic(diagnostic_path, window.diagnostic_snapshot())
+        snapshot_written = True
+        LOGGER.info("Wrote diagnostic snapshot %s", diagnostic_path)
+
+    application.aboutToQuit.connect(write_snapshot)
+    application.aboutToQuit.connect(window.shutdown)
+
+    if args.exit_after > 0:
+        def finish() -> None:
+            LOGGER.info("Diagnostic exit after %.1f seconds", args.exit_after)
+            if args.screenshot is not None:
+                screenshot = args.screenshot
+                if not screenshot.is_absolute():
+                    screenshot = ROOT / screenshot
+                window.save_screenshot(screenshot)
+                LOGGER.info("Wrote diagnostic screenshot %s", screenshot)
+            window.shutdown()
+            application.quit()
+
+        QTimer.singleShot(round(args.exit_after * 1000.0), finish)
+    return int(application.exec())
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     os.environ.setdefault("OV_TELEMETRY_OPT_IN", "0")
+    os.chdir(ROOT)
     handler = _session_log()
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    LOGGER.info("Engine Lab started source=%s scenario=%s selftest=%s", args.source, args.scenario, args.selftest)
+    LOGGER.info(
+        "Engine Lab started source=%s scenario=%s device=%s selftest=%s",
+        args.source,
+        args.scenario,
+        args.device,
+        args.selftest,
+    )
     if args.selftest:
         return _selftest()
-    print("Engine Lab Phase 0 setup is installed and verified by tools/preflight.py.")
-    print("The Qt inference application is intentionally scheduled for Phase 1; no demo-mode metrics are fabricated.")
-    return 0
+    return _run_application(args)
 
 
 if __name__ == "__main__":

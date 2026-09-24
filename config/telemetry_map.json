@@ -1,5 +1,5 @@
 {
-  "probed_on": "2026-09-24T00:09:31.656464+00:00",
+  "probed_on": "2026-09-24T01:02:44.103332+00:00",
   "windows_build": "10.0.26200.7840",
   "driver_versions": {
     "npu": "32.0.100.5540",
@@ -127,8 +127,13 @@
       "pattern": "pid_<pid>_luid_0x00000000_0x000128A6_phys_0_eng_0_engtype_Neural",
       "device": "NPU",
       "engtype": "Neural"
+    },
+    {
+      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_0_engtype_3D\ufffd",
+      "device": "UNKNOWN",
+      "engtype": "3D\ufffd"
     }
   ],
   "fallback": "npu_duty_cycle",
-  "notes": "SetupAPI reports overlapping physical ids for the NPU and GPU; LUID is used as the unambiguous tie-breaker. 1 enumerated instance name(s) could not be parsed safely; they remain in the raw probe log and were omitted from the generated map. NPU PDH instances were observed using SetupAPI LUID; physical id was used only after checking for an NPU/GPU id collision."
+  "notes": "SetupAPI reports overlapping physical ids for the NPU and GPU; LUID is used as the unambiguous tie-breaker. NPU PDH instances were observed using SetupAPI LUID; physical id was used only after checking for an NPU/GPU id collision."
 }
