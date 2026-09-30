@@ -25,6 +25,7 @@ from app.engine.pipelines import (
     load_scenario_catalog,
 )
 from app.hud import MainWindow
+from app import hangwatch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -638,6 +639,9 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(ROOT)
     handler = _session_log()
     logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # A Windows "Application Hang" kills the process with no traceback, so let the app record its
+    # own stacks while it is still stuck (see app/hangwatch.py).
+    hangwatch.arm(getattr(handler, "stream", None))
     LOGGER.info(
         "Engine Lab started source=%s scenario=%s device=%s mode=%s density=%s "
         "npu_off=%s gpu_off=%s npu_toggle_after=%s gpu_toggle_after=%s "
