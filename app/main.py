@@ -146,8 +146,15 @@ def _selftest() -> int:
                 ):
                     raise RuntimeError(f"non-static configured shape for {model['id']}: {shape}")
                 model_dir = ROOT / "models" / model["id"]
-                if model["source"] == "huggingface":
-                    files = [*model["files"], "source_config.json", "labels.txt", "labels.json"]
+                if model["source"] in {"huggingface", "converted"}:
+                    # "converted" models (CLIP) already list their own
+                    # vocabulary artefacts, so only the IR pair is required
+                    # here; they carry no labels.txt or source_config.json.
+                    files = (
+                        [*model["files"], "source_config.json", "labels.txt", "labels.json"]
+                        if model["source"] == "huggingface"
+                        else list(model["files"])
+                    )
                 else:
                     files = [
                         Path(model["url_xml"]).name,
@@ -244,10 +251,36 @@ def _selftest() -> int:
             availability_path = ROOT / "cache" / "availability.json"
             payload = json.loads(availability_path.read_text(encoding="utf-8"))
             matrix = AvailabilityMatrix.from_dict(payload, cache_hit=True)
+            # Derive the expected model count from the config instead of
+            # hardcoding it, so adding a model cannot silently invalidate this
+            # self-test.
+            configured = _load_json(REQUIRED_CONFIG)["models"]
+            expected_ids = {model["id"] for model in configured}
+            devices = set(matrix.available_devices)
             result_count = sum(len(model.devices) for model in matrix.models.values())
-            if len(matrix.models) != 10 or result_count != 30 or "CPU" not in matrix.available_devices:
-                raise RuntimeError("Phase 2 availability cache is incomplete")
-            return "policy both-off=CPU, density=8, availability=10 models × 3 devices"
+            problems: list[str] = []
+            if set(matrix.models) != expected_ids:
+                problems.append(
+                    f"cache covers {sorted(set(matrix.models) ^ expected_ids)} unexpectedly"
+                )
+            for model_id, model in matrix.models.items():
+                unknown = set(model.devices) - devices
+                if unknown:
+                    problems.append(f"{model_id} reports unknown devices {sorted(unknown)}")
+            if "CPU" not in devices:
+                problems.append("CPU missing from available devices")
+            # Every model must be probed on every available device.
+            if result_count != len(expected_ids) * len(devices):
+                problems.append(
+                    f"expected {len(expected_ids) * len(devices)} device results, "
+                    f"found {result_count}"
+                )
+            if problems:
+                raise RuntimeError("Phase 2 availability cache is incomplete: " + "; ".join(problems))
+            return (
+                f"policy both-off=CPU, density=8, availability="
+                f"{len(expected_ids)} models x {len(devices)} devices"
+            )
 
         _selftest_check(checks, "Phase 2 local inventory", phase2_local_inventory_check)
 

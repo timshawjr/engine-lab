@@ -357,6 +357,10 @@ def _model_paths(model: dict[str, Any]) -> list[Path]:
     model_dir = ROOT / "models" / model["id"]
     if model["source"] == "huggingface":
         names = list(model["files"]) + ["source_config.json", "labels.txt", "labels.json"]
+    elif model["source"] == "converted":
+        # Locally built IR (CLIP): the entry lists its own required artefacts,
+        # including the baked vocabulary, and has no source_config or labels.
+        names = list(model["files"])
     else:
         names = [Path(model["url_xml"]).name, Path(model["url_bin"]).name, "labels.json"]
     return [model_dir / name for name in names]

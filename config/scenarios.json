@@ -3,9 +3,9 @@
   "scenarios": [
     {
       "id": "retail",
-      "title": "Retail / POS",
-      "vertical": "Retail / loss prevention",
-      "business_line": "Self-checkout and loss prevention: detect the item, classify it, log the event — all on one SoC.",
+      "title": "Retail / Shelf Monitoring",
+      "vertical": "Retail / shelf analytics",
+      "business_line": "Shelf-side retail monitoring: find the item, name it from a declared store vocabulary, log the event — all on one SoC.",
       "video_id": "retail_aisle",
       "stages": [
         {
@@ -14,8 +14,8 @@
           "device_pref": "NPU"
         },
         {
-          "stage": "classifier",
-          "model_id": "efficientnet-b0-fp16",
+          "stage": "product_classifier",
+          "model_id": "clip-vision-patch32",
           "device_pref": "GPU"
         },
         {
@@ -36,27 +36,51 @@
           "kind": "shelf"
         },
         {
-          "name": "checkout",
-          "roi": [0.34, 0.62, 0.32, 0.38],
-          "kind": "checkout"
+          "name": "center_aisle",
+          "roi": [0.34, 0.22, 0.32, 0.78],
+          "kind": "aisle"
         }
       ],
       "event_rules": {
         "event_window_s": 60.0,
         "confidence_min": 0.30,
         "iou_threshold": 0.45,
-        "max_detections": 100,
+        "max_detections": 20,
         "tracking_iou_threshold": 0.10,
-        "track_persist_s": 1.0,
-        "event_cooldown_s": 1.0,
+        "tracking_min_iou": 0.03,
+        "tracking_center_distance": 0.65,
+        "max_track_misses": 30,
+        "track_persist_s": 1.5,
+        "event_cooldown_s": 2.0,
         "count_dwell_s": 0.40,
         "picked_up_dwell_s": 0.60,
-        "classify_top_k": 3,
-        "classification_min": 0.15
+        "classify_top_k": 2,
+        "zero_shot_min": 0.22,
+        "classify_min_frames": 3,
+        "classify_min_crop_px": 40,
+        "classify_detector_labels": [
+          "bowl",
+          "cup",
+          "bottle",
+          "wine glass",
+          "vase"
+        ],
+        "business_event_labels": [
+          "pot",
+          "mixing bowl",
+          "soup bowl",
+          "plate",
+          "cup",
+          "glass",
+          "bottle",
+          "vase",
+          "kettle",
+          "storage container"
+        ]
       },
       "ticker": [
-        "Detect the item at the shelf",
-        "Classify the top product candidates",
+        "Find the item on the shelf",
+        "Name it from the declared store vocabulary",
         "Log the retail event on-device",
         "One SoC, three explicit engines"
       ]
@@ -72,11 +96,6 @@
           "stage": "detector",
           "model_id": "person-vehicle-bike-detection-crossroad-1016",
           "device_pref": "NPU"
-        },
-        {
-          "stage": "classifier",
-          "model_id": "efficientnet-b0-fp16",
-          "device_pref": "GPU"
         },
         {
           "stage": "zone_event",
@@ -106,16 +125,18 @@
         "confidence_min": 0.30,
         "iou_threshold": 0.40,
         "max_detections": 100,
+        "tracking_iou_threshold": 0.20,
+        "tracking_min_iou": 0.05,
+        "tracking_center_distance": 0.80,
+        "max_track_misses": 12,
         "count_dwell_s": 0.40,
         "track_persist_s": 1.0,
-        "event_cooldown_s": 1.0,
-        "classify_top_k": 2,
-        "classification_min": 0.12
+        "event_cooldown_s": 1.0
       },
       "ticker": [
         "Detect vehicles, bicycles, and people",
         "Count entries and exits by zone",
-        "Classify active tracks at the edge",
+        "Track each road user by measured IoU",
         "No server round-trip"
       ]
     },
@@ -159,6 +180,10 @@
         "confidence_min": 0.30,
         "iou_threshold": 0.40,
         "max_detections": 100,
+        "tracking_iou_threshold": 0.15,
+        "tracking_min_iou": 0.02,
+        "tracking_center_distance": 0.80,
+        "max_track_misses": 10,
         "count_dwell_s": 0.40,
         "track_persist_s": 1.0,
         "pose_keypoint_threshold": 0.30,
@@ -178,7 +203,7 @@
       "title": "Government / Defense",
       "vertical": "Perimeter analytics",
       "business_line": "Multi-camera perimeter on one platform: stream density is the metric, not TOPS.",
-      "video_id": "street_cars",
+      "video_id": "government_perimeter",
       "stages": [
         {
           "stage": "perimeter_detector",
@@ -209,6 +234,9 @@
         "iou_threshold": 0.35,
         "max_detections": 100,
         "tracking_iou_threshold": 0.30,
+        "tracking_min_iou": 0.05,
+        "tracking_center_distance": 0.50,
+        "max_track_misses": 12,
         "count_dwell_s": 0.40,
         "track_persist_s": 0.50,
         "plate_confidence_min": 0.20,

@@ -65,13 +65,83 @@ NPU counter is found unless its explicit development fallback is requested.
 
 The current local checks on this machine are:
 
-- source verification: **40 PASS, 0 FAIL**;
+- source verification: **43 PASS, 0 FAIL**;
 - preflight: **89 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model ×
   NPU/GPU/CPU combination and the four Phase 3 scenario graphs;
 - network-blocked self-test: **11 PASS, 0 FAIL**;
-- unit tests: **20 PASS, 0 FAIL**.
+- unit tests: **25 PASS, 0 FAIL**.
 
-## Running the booth
+## Frame-level review harness
+
+The development-only review runner uses the real scenario worker and retains frame-level evidence
+without changing the production dependency set:
+
+```powershell
+$env:PYTHONPATH = "C:\Users\Intel Demo\AppData\Local\Temp\opencode\engine-lab-review-deps"
+$env:QT_QPA_PLATFORM = "offscreen"
+.venv\Scripts\python.exe tools\review_sessions.py --scenario retail --seconds 60 --output logs\review-retail
+.venv\Scripts\python.exe tools\review_sessions.py --scenario medical --seconds 60 --output logs\review-medical
+Remove-Item Env:PYTHONPATH
+Remove-Item Env:QT_QPA_PLATFORM
+```
+
+Each run writes `annotated.mp4`, `contact-sheet.png`, `frames.jsonl`, and `summary.json` under the
+selected output directory. The JSONL records raw detections, tracked IDs, labels, confidences,
+classifications, keypoints, zones, events, stage metrics, and explicit execution placements.
+
+### How retail finds and names a product
+
+Retail detects on **YOLO11n** and names with **CLIP ViT-B/32** in zero-shot mode. The store's
+inventory is declared in `tools/clip_vocabulary.py` as plain product names with prompt templates,
+and CLIP may only ever return one of those words, so the overlay cannot invent a class.
+
+**The classifier is more accurate than the detector's label, and that is the point.** On the
+store-aisle clip YOLO11n reports `bowl` on every pass. It is a stainless steel saucepan with a rim
+and handle, and CLIP independently names it `pot`: 75 of 75 confident calls agreed, verified by
+inspecting the crops. The old failure was never only a bad classifier - we were grading CLIP
+against a COCO label that was itself wrong, and an allowlist built on that wrong label.
+
+Measured over 60 s (3,138 frames): `bowl -> pot` on 1,368 frames, plus `mixing bowl`, `soup bowl`
+and `storage container`. **The person is never classified.** The FPS shown is measured.
+
+| Stage | Device | Measured | Job |
+|---|---|---|---|
+| YOLO11n (`detector`) | **NPU** | 12.3 ms/frame (81 fps) | find the item, every frame, full rate |
+| CLIP (`product_classifier`) | **GPU** | ~3 ms/crop | name it from the declared vocabulary |
+| event logic | **CPU** | sub-ms | zones, tracks, business events |
+
+All three engines report measured activity, and 4 concurrent streams hold **25.7 FPS** with NPU at
+34%, GPU at 94% and CPU at 73%.
+
+**No tokenizer on the booth machine.** The vocabulary is fixed configuration, so
+`tools/build_clip_zero_shot.py` bakes the text embeddings for it once. The app ships only the
+vision tower and runs no tokenizer and no text encoder. Both build tools are development-only and
+need `torch`/`transformers`, which are deliberately absent from the production
+`requirements.txt`.
+
+Rebuild with:
+
+```cmd
+<dev-venv>\Scripts\python tools\build_clip_zero_shot.py
+.venv\Scripts\python tools\convert_clip_onnx.py --fp16
+```
+
+**Three gates keep the output defensible, all measured rather than assumed:**
+
+1. **Detector allowlist** - only the classes the detector actually gets right on this footage
+   (`bowl`, `cup`, `bottle`, `wine glass`, `vase`) are submitted to CLIP. `person` is excluded
+   explicitly, and so is every unlisted class, so the gate fails closed.
+2. **Per-label business-event gate** - the declared inventory also gates `object_classified` and
+   `object_picked_up`. Without it the tracker logged `object_picked_up person`, which is not a
+   statement worth making, and on other footage it logged `object_picked_up microwave`.
+3. **Temporal stability** - a label must repeat for `classify_min_frames` consecutive frames on one
+   track before it is displayed or emitted, and it emits once per track per label rather than once
+   per frame.
+
+**Known limit, stated plainly:** the vocabulary is a *category* list, not a SKU database. `pot` is a
+true statement about the crop; it is not a product code and the app does not claim it is one. The
+second-shelf items sit at roughly 50x50 px, so the weaker vocabulary entries land near the 0.22
+confidence floor and appear on only a few frames each.
 
 ### One-click default
 
@@ -101,16 +171,24 @@ The four graphs are:
 
 | Key | Scenario | Video | Measured stage story |
 |---:|---|---|---|
-| `1` | Retail / POS | `store-aisle-detection.mp4` | YOLO11n detection → EfficientNet-B0 top-k classification → shelf/zone events |
-| `2` | Smart city / traffic | `person-bicycle-car-detection.mp4` | crossroad detection → EfficientNet classification → lane/zone counts |
+| `1` | Retail / Shelf Monitoring | `store-aisle-detection.mp4` | YOLO11n detection on the NPU → CLIP names the item from a declared store vocabulary → shelf/zone events |
+| `2` | Smart city / traffic | `smart-city-traffic-montage.mp4` | busy crosswalk/traffic-light footage → lane/zone counts (detector class is the business answer; no weak classifier) |
 | `3` | Medical / eldercare | `one-by-one-person-detection.mp4` | person detection → pose heatmap/PAF decoding → posture/zone events |
-| `4` | Government / defense | `car-detection.mp4` | independent perimeter copies → person/plate detection → IoU tracks/plate events |
+| `4` | Government / defense | `government-perimeter-montage.mp4` | worker-perimeter action → vehicle/plate footage → independent perimeter copies → person/plate detection → IoU tracks/plate events |
 
 The initial `spread` assignment is explicit and visible in each tile. Retail, smart-city, and pose
 work use the NPU where the measured graph calls for it; the medical person detector is explicitly
 GPU-preferred because the local NPU output for that OMZ detector was not useful for the event
 overlay, while its pose stage remains on the NPU. The operator overlay always reports the actual
 `EXECUTION_DEVICES`; the requested preference is never presented as proof.
+
+### Live failover controls
+
+Press `G` during `SPREAD` or `SPLIT` to disable GPU assignment. GPU-preferred auxiliary stages then
+fail over to NPU when NPU is available. Press `N` to disable NPU assignment; NPU-preferred auxiliary
+stages then fail over to GPU. If both accelerators are disabled, they fall back to CPU. The status
+panel shows `GPU OFF · NPU FAILOVER`, `NPU OFF · GPU FAILOVER`, or `NPU/GPU OFF · CPU FALLBACK`, and
+the stage tiles continue to show the measured execution devices.
 
 ### Attract and unattended run
 

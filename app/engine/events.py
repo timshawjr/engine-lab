@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections import Counter, deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable
 
 from app.engine.stages import Detection
@@ -40,7 +40,15 @@ class _Track:
     inside_since: float | None = None
     picked_emitted: bool = False
     classified_at: float = 0.0
+    classification_label: str = ""
+    classification_streak: int = 0
+    emitted_classifications: set[str] = field(default_factory=set)
+    counted_zones: set[str] = field(default_factory=set)
     plate_emitted: bool = False
+    velocity_x: float = 0.0
+    velocity_y: float = 0.0
+    hits: int = 0
+    misses: int = 0
 
 
 def _iou(left: Detection, right: Detection) -> float:
@@ -53,9 +61,27 @@ def _iou(left: Detection, right: Detection) -> float:
     return intersection / union if union > 0.0 else 0.0
 
 
-def _center_in_zone(detection: Detection, zone: "Zone") -> bool:
-    center_x = detection.x1 + detection.width / 2.0
-    center_y = detection.y1 + detection.height / 2.0
+def _center_in_zone(
+    detection: Detection,
+    zone: "Zone",
+    source_size: tuple[int, int],
+) -> bool:
+    """Test a detection centre against a normalized ROI.
+
+    ``zone.roi`` is normalized to 0..1 but detections are in source pixels, so
+    the centre has to be normalized before it is compared. Skipping that
+    division silently makes every zone test fail, which previously left
+    ``person_counted``, ``vehicle_counted`` and ``object_picked_up`` unable to
+    ever fire. ``tools/review_sessions.py`` always did the conversion, which is
+    why the bug survived so long: the review harness reported zone activity the
+    live tracker was not actually seeing.
+    """
+
+    source_width, source_height = source_size
+    if source_width <= 0 or source_height <= 0:
+        return False
+    center_x = _center(detection)[0] / source_width
+    center_y = _center(detection)[1] / source_height
     x, y, width, height = zone.roi
     return x <= center_x <= x + width and y <= center_y <= y + height
 
@@ -74,6 +100,10 @@ class EventTracker:
         self._batch_events: list[BusinessEvent] = []
         self._last_posture_event = 0.0
         self._posture_since: float | None = None
+        # Detections arrive in source pixels while zone ROIs are normalized, so
+        # the tracker needs the frame size to test membership. It is set from
+        # the pipeline metrics on every update.
+        self._source_size: tuple[int, int] = (0, 0)
 
     def reset(self, scenario: "ScenarioConfig") -> None:
         self.scenario = scenario
@@ -82,13 +112,34 @@ class EventTracker:
         self._next_track_id = 1
         self._last_posture_event = 0.0
         self._posture_since = None
+        self._source_size = (0, 0)
+
+    def _may_raise_business_event(self, detection: Detection) -> bool:
+        """Gate business events on the scenario's declared detector classes.
+
+        YOLO hallucinates objects in a retail scene: on the measured store-aisle
+        footage it reported shelf hardware as ``microwave``, ``oven`` and ``tv``,
+        and it also reports the shopper. Without this gate the tracker could
+        dutifully log ``object_picked_up person``, which is not a statement worth
+        making. A scenario opts in with ``business_event_labels``; an empty or
+        missing list means unrestricted, which is the pre-existing behaviour for
+        the other graphs.
+        """
+
+        allowed = self.scenario.event_rules.get("business_event_labels")
+        if not allowed:
+            return True
+        return detection.label.lower() in {str(v).strip().lower() for v in allowed}
+
+    def _in_zone(self, detection: Detection, zone: "Zone") -> bool:
+        return _center_in_zone(detection, zone, self._source_size)
 
     def _new_track(self, detection: Detection, now: float) -> _Track:
         shelf = next(
             (
                 zone
                 for zone in self.scenario.zones
-                if zone.kind == "shelf" and _center_in_zone(detection, zone)
+                if zone.kind == "shelf" and self._in_zone(detection, zone)
             ),
             None,
         )
@@ -100,6 +151,7 @@ class EventTracker:
             last_seen=now,
             started_in_shelf=shelf is not None,
             shelf_name=shelf.name if shelf is not None else "",
+            hits=1,
         )
         self._next_track_id += 1
         self._tracks[track.track_id] = track
@@ -112,32 +164,88 @@ class EventTracker:
     ) -> list[tuple[Detection, _Track]]:
         rules = self.scenario.event_rules
         iou_threshold = float(rules.get("tracking_iou_threshold", rules["iou_threshold"]))
+        min_iou = float(rules.get("tracking_min_iou", 0.05))
+        center_threshold = float(rules.get("tracking_center_distance", 1.0))
         persist_seconds = float(rules["track_persist_s"])
-        unmatched = set(self._tracks)
+        max_misses = int(rules.get("max_track_misses", 2))
+        existing_track_ids = set(self._tracks)
+        assigned_tracks: set[int] = set()
         assignments: list[tuple[Detection, _Track]] = []
+
+        # Keep the original per-detection IoU priority. Motion is only a
+        # fallback for a detector dropout or a moving box; global greedy
+        # pairing can swap two same-label retail objects in a crowded frame.
         for detection in detections:
-            candidates = sorted(
-                (
-                    (_iou(detection, Detection(*track.box, track.label, 1.0)), track)
-                    for track_id, track in self._tracks.items()
-                    if track_id in unmatched
-                    and track.label == detection.label
-                    and now - track.last_seen <= persist_seconds
-                ),
-                key=lambda item: item[0],
-                reverse=True,
-            )
-            if candidates and candidates[0][0] >= iou_threshold:
-                _, track = candidates[0]
-                unmatched.remove(track.track_id)
+            detection_center = _center(detection)
+            candidates: list[tuple[float, int]] = []
+            fallback_candidates: list[tuple[float, int]] = []
+            for track_id, track in self._tracks.items():
+                if (
+                    track_id in assigned_tracks
+                    or track.label != detection.label
+                    or now - track.last_seen > persist_seconds
+                ):
+                    continue
+                track_detection = Detection(*track.box, track.label, 1.0)
+                current_iou = _iou(detection, track_detection)
+                predicted_box = (
+                    track.box[0] + track.velocity_x,
+                    track.box[1] + track.velocity_y,
+                    track.box[2] + track.velocity_x,
+                    track.box[3] + track.velocity_y,
+                )
+                predicted_iou = _iou(
+                    detection,
+                    Detection(*predicted_box, track.label, 1.0),
+                )
+                track_center = _center(track_detection)
+                predicted_center = (
+                    track_center[0] + track.velocity_x,
+                    track_center[1] + track.velocity_y,
+                )
+                scale = max(1.0, track_detection.width, track_detection.height)
+                center_distance = math.hypot(
+                    detection_center[0] - predicted_center[0],
+                    detection_center[1] - predicted_center[1],
+                ) / scale
+                center_score = max(0.0, 1.0 - center_distance / center_threshold)
+                if current_iou >= iou_threshold:
+                    # Preserve the original IoU-first decision whenever a
+                    # real overlap exists; this avoids same-label ID swaps.
+                    candidates.append((current_iou, track_id))
+                elif predicted_iou >= min_iou and center_distance <= center_threshold:
+                    fallback_candidates.append((predicted_iou + 0.10 * center_score, track_id))
+
+            if candidates:
+                _score, track_id = max(candidates)
+            elif fallback_candidates:
+                _score, track_id = max(fallback_candidates)
+            else:
+                track_id = 0
+            if track_id:
+                track = self._tracks[track_id]
+                old_center = _center(Detection(*track.box, track.label, 1.0))
+                new_center = _center(detection)
+                track.velocity_x = 0.5 * track.velocity_x + 0.5 * (new_center[0] - old_center[0])
+                track.velocity_y = 0.5 * track.velocity_y + 0.5 * (new_center[1] - old_center[1])
+                track.box = (detection.x1, detection.y1, detection.x2, detection.y2)
+                track.last_seen = now
+                track.hits += 1
+                track.misses = 0
+                assigned_tracks.add(track_id)
             else:
                 track = self._new_track(detection, now)
-            track.box = (detection.x1, detection.y1, detection.x2, detection.y2)
-            track.last_seen = now
             assignments.append((detection.with_track(track.track_id), track))
-        for track_id in unmatched:
-            track = self._tracks[track_id]
-            if now - track.last_seen > persist_seconds:
+
+        for track_id in existing_track_ids - assigned_tracks:
+            track = self._tracks.get(track_id)
+            if track is None:
+                continue
+            track.misses += 1
+            if (
+                track.misses > max_misses
+                or now - track.last_seen > persist_seconds
+            ):
                 self._tracks.pop(track_id, None)
         return assignments
 
@@ -149,10 +257,16 @@ class EventTracker:
         now: float,
     ) -> BusinessEvent:
         is_classification = event_type == "object_classified"
+        if is_classification:
+            # A declared-vocabulary name tells an operator more than the COCO
+            # class: "pot" is correct where the 80-class head says "bowl".
+            event_label = detection.classification
+        else:
+            event_label = detection.label
         event = BusinessEvent(
             ts=now,
             type=event_type,
-            label=detection.classification if is_classification else detection.label,
+            label=event_label,
             confidence=float(
                 detection.classification_confidence
                 if is_classification
@@ -170,32 +284,59 @@ class EventTracker:
         *,
         now: float | None = None,
         posture_angles: tuple[float, ...] = (),
+        source_size: tuple[int, int] = (0, 0),
     ) -> tuple[tuple[Detection, ...], tuple[BusinessEvent, ...]]:
         timestamp = time.time() if now is None else now
         self._batch_events.clear()
+        if source_size != (0, 0):
+            self._source_size = source_size
         rules = self.scenario.event_rules
         assignments = self._assign_tracks(detections, timestamp)
+        # A single-frame ImageNet top-1 is noise. Require the same label to
+        # repeat on this track before it is displayed or emitted.
+        stable_frames = max(1, int(rules.get("classify_min_frames", 1)))
         tracked: list[Detection] = []
         for detection, track in assignments:
             if detection.classification:
-                if timestamp - track.classified_at >= float(
-                    rules["event_cooldown_s"]
-                ):
-                    self._emit("object_classified", detection, track.inside_zone, timestamp)
-                    track.classified_at = timestamp
+                if detection.classification == track.classification_label:
+                    track.classification_streak += 1
+                else:
+                    track.classification_label = detection.classification
+                    track.classification_streak = 1
+                if track.classification_streak < stable_frames:
+                    detection = detection.with_classification("", 0.0)
+            else:
+                track.classification_label = ""
+                track.classification_streak = 0
+            if (
+                detection.classification
+                and detection.classification not in track.emitted_classifications
+                and timestamp - track.classified_at >= float(rules["event_cooldown_s"])
+            ):
+                self._emit("object_classified", detection, track.inside_zone, timestamp)
+                track.emitted_classifications.add(detection.classification)
+                track.classified_at = timestamp
 
             inside_zones = [
                 zone for zone in self.scenario.zones
-                if _center_in_zone(detection, zone)
+                if self._in_zone(detection, zone)
             ]
             if inside_zones:
                 zone = inside_zones[0]
                 if track.inside_zone != zone.name:
                     track.inside_since = timestamp
                 dwell = timestamp - (track.inside_since or timestamp)
-                if dwell >= float(rules["count_dwell_s"]):
+                # Count each track once per zone. Without this guard the event
+                # re-fires on every single frame the track dwells in the zone,
+                # which produced 2,459 "vehicle_counted" events in 25 seconds and
+                # made the rolling count meaningless.
+                if (
+                    dwell >= float(rules["count_dwell_s"])
+                    and zone.name not in track.counted_zones
+                ):
                     if zone.kind == "person_entry" and detection.label == "person":
                         self._emit("person_counted", detection, zone.name, timestamp)
+                        track.counted_zones.add(zone.name)
                     elif zone.kind in {"vehicle_entry", "vehicle_exit"} and detection.label in {
                         "vehicle",
                         "car",
@@ -203,6 +344,7 @@ class EventTracker:
                         "truck",
                     }:
                         self._emit("vehicle_counted", detection, zone.name, timestamp)
+                        track.counted_zones.add(zone.name)
                 track.inside_zone = zone.name
             else:
                 track.inside_zone = ""
@@ -211,7 +353,7 @@ class EventTracker:
             if (
                 track.started_in_shelf
                 and not any(
-                    zone.kind == "shelf" and _center_in_zone(detection, zone)
+                    zone.kind == "shelf" and self._in_zone(detection, zone)
                     for zone in self.scenario.zones
                 )
             ):
@@ -221,7 +363,11 @@ class EventTracker:
                     not track.picked_emitted
                     and timestamp - track.outside_since
                     >= float(rules.get("picked_up_dwell_s", 0.0))
+                    and self._may_raise_business_event(detection)
                 ):
+                    # Gated like every other business event: a shopper walking
+                    # out of a shelf zone is not a product being taken, and
+                    # "object_picked_up person" is not a statement worth making.
                     self._emit("object_picked_up", detection, track.shelf_name, timestamp)
                     track.picked_emitted = True
             else:

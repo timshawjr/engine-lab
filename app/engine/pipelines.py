@@ -33,19 +33,47 @@ from app.engine.stages import (
     decode_pose,
     load_labels,
     load_preprocess_config,
+    load_zero_shot_vocabulary,
     postprocess_classification,
     postprocess_ssd,
     postprocess_yolo,
+    postprocess_zero_shot,
     preprocess_classification,
+    preprocess_clip,
     preprocess_omz_image,
     preprocess_yolo,
 )
 from app.scenarios.medical import confident_pose_angle
-from app.scenarios.retail import classification_candidates
+from app.scenarios.retail import classification_allowed, classification_candidates
 from app.telemetry.npu_fallback import NpuDutyCycle
 
 
 LOGICAL_STAGES = {"zone_event", "posture_event", "track_event"}
+
+
+def _idle_stage_metric(
+    assignment: StageAssignment,
+    runner: OpenVINOSingleRunner,
+    output_count: int,
+    inference_count: int,
+) -> StageMetric:
+    """A real stage measurement for a frame where nothing was submitted.
+
+    The stage still compiled and is still placed on its device, so it must keep
+    reporting that placement rather than disappearing from the pipeline bar.
+    """
+
+    return StageMetric(
+        stage=assignment.stage,
+        model_id=assignment.model_id,
+        requested_device=assignment.requested_device,
+        execution_devices=runner.info.execution_devices,
+        preprocess_ms=0.0,
+        inference_ms=0.0,
+        postprocess_ms=0.0,
+        output_count=output_count,
+        inference_count=inference_count,
+    )
 
 
 @dataclass(frozen=True)
@@ -128,6 +156,7 @@ class PipelineFrame:
     stream_index: int
     scenario_id: str
     detections: tuple[Detection, ...]
+    raw_detections: tuple[Detection, ...]
     events: tuple[BusinessEvent, ...]
     metrics: PipelineFrameMetrics
     placements: dict[str, RunnerInfo]
@@ -238,7 +267,10 @@ class ScenarioModelRegistry:
         self.stores: dict[str, CompiledModelStore] = {}
         for model_id, entry in self.model_entries.items():
             model_dir = models_root / model_id
-            if entry["source"] == "huggingface":
+            if entry["source"] in {"huggingface", "converted"}:
+                # "converted" IR is built locally from a PyTorch checkpoint by
+                # tools/build_clip_zero_shot.py; the first listed file is the
+                # OpenVINO .xml, same layout as the downloaded models.
                 model_path = model_dir / entry["files"][0]
             else:
                 model_path = model_dir / Path(entry["url_xml"]).name
@@ -351,19 +383,31 @@ def _stage_target(
     if snapshot.mode == DeviceMode.GPU_ONLY:
         return ("GPU", "GPU") if policy.gpu_enabled else ("CPU", "GPU")
     if snapshot.mode == DeviceMode.SPLIT:
-        if stage.device_pref == "NPU" and policy.npu_enabled:
-            return "NPU", "NPU"
-        if stage.device_pref == "GPU" and policy.gpu_enabled:
-            return "GPU", "GPU"
+        if stage.device_pref == "NPU":
+            if policy.npu_enabled:
+                return "NPU", "NPU"
+            if policy.gpu_enabled:
+                return "GPU", "NPU"
+        if stage.device_pref == "GPU":
+            if policy.gpu_enabled:
+                return "GPU", "GPU"
+            if policy.npu_enabled:
+                return "NPU", "GPU"
         return "CPU", stage.device_pref
 
     auxiliary = stage.stage not in {"detector", "perimeter_detector", "plate_detector"}
     if auxiliary:
         if stage.device_pref == "NPU" and not policy.npu_enabled:
+            if policy.gpu_enabled:
+                return "GPU", "NPU"
             return "CPU", "NPU"
         if stage.device_pref == "GPU" and not policy.gpu_enabled:
+            if policy.npu_enabled:
+                return "NPU", "GPU"
             return "CPU", "GPU"
         return stage.device_pref, stage.device_pref
+    if scenario.id == "gov_defense" and stage.device_pref == "GPU" and policy.gpu_enabled:
+        return "GPU", "GPU"
     requested = policy.device_for_stream(stream_index, stage.device_pref)
     return requested, requested
 
@@ -509,6 +553,12 @@ class ScenarioStreamWorker(QThread):
         self._event_tracker = self._event_trackers[scenario.id]
         self._latest_placements: dict[str, RunnerInfo] = {}
         self._fallbacks: list[str] = []
+        # Baked CLIP text embeddings are configuration, not per-frame work, so
+        # they are loaded once per worker and reused for every frame.
+        self._zero_shot_cache: dict[
+            str,
+            tuple[np.ndarray, tuple[str, ...], tuple[int, ...]],
+        ] = {}
 
     def set_runtime(
         self,
@@ -677,6 +727,7 @@ class ScenarioStreamWorker(QThread):
             detections,
             confidence_min=float(self.scenario.event_rules["confidence_min"]),
             top_k=top_k,
+            detector_labels=self.scenario.event_rules.get("classify_detector_labels", ()),
         )
         classified = list(detections)
         classified_by_id = {id(item): index for index, item in enumerate(classified)}
@@ -701,6 +752,15 @@ class ScenarioStreamWorker(QThread):
             )
             if not predictions or predictions[0][1] < minimum:
                 continue
+            # Second gate: the predicted ImageNet class must be one this
+            # scenario is prepared to defend as a candidate. Anything else is
+            # dropped here rather than surfaced in the overlay.
+            if not classification_allowed(
+                candidate.label,
+                predictions[0][0],
+                self.scenario.event_rules.get("classify_output_labels", {}),
+            ):
+                continue
             index = classified_by_id[id(candidate)]
             classified[index] = candidate.with_classification(
                 predictions[0][0],
@@ -719,6 +779,93 @@ class ScenarioStreamWorker(QThread):
             output_count=classified_count,
             inference_count=len(candidates),
         )
+
+    def _run_zero_shot(
+        self,
+        frame: np.ndarray,
+        detections: tuple[Detection, ...],
+        assignment: StageAssignment,
+        runner: OpenVINOSingleRunner,
+    ) -> tuple[tuple[Detection, ...], StageMetric]:
+        """Name each candidate crop with CLIP against a declared vocabulary.
+
+        Unlike the ImageNet classifier, the output set is bounded by
+        ``vocabulary.json``, which is generated from
+        ``tools/clip_vocabulary.py``. CLIP can only return one of the words the
+        operator declared, so the overlay cannot invent a label.
+        """
+
+        bundle = self.registry.bundle(assignment.model_id)
+        rules = self.scenario.event_rules
+        top_k = int(rules.get("classify_top_k", 1))
+        minimum = float(rules["zero_shot_min"])
+        min_crop = float(rules.get("classify_min_crop_px", 0.0))
+        candidates = classification_candidates(
+            detections,
+            confidence_min=float(rules["confidence_min"]),
+            top_k=top_k,
+            detector_labels=rules.get("classify_detector_labels", ()),
+            min_crop_pixels=min_crop,
+        )
+        if not candidates:
+            return detections, _idle_stage_metric(assignment, runner, 0, 0)
+
+        embeddings, labels, template_counts = self._zero_shot_vocabulary(
+            assignment.model_id, bundle
+        )
+        classified = list(detections)
+        classified_by_id = {id(item): index for index, item in enumerate(classified)}
+        preprocess_ms = 0.0
+        inference_ms = 0.0
+        classified_count = 0
+        postprocess_started = time.perf_counter()
+        for candidate in candidates:
+            crop = crop_detection(frame, candidate)
+            started = time.perf_counter()
+            tensor = preprocess_clip(crop)
+            preprocess_ms += (time.perf_counter() - started) * 1000.0
+            output, duration_ms = runner.infer(tensor)
+            inference_ms += duration_ms
+            predictions = postprocess_zero_shot(
+                output,
+                embeddings,
+                labels,
+                template_counts,
+                top_k,
+            )
+            if not predictions or predictions[0][1] < minimum:
+                continue
+            classified[classified_by_id[id(candidate)]] = candidate.with_classification(
+                predictions[0][0],
+                predictions[0][1],
+            )
+            classified_count += 1
+        postprocess_ms = (time.perf_counter() - postprocess_started) * 1000.0
+        return tuple(classified), StageMetric(
+            stage=assignment.stage,
+            model_id=assignment.model_id,
+            requested_device=assignment.requested_device,
+            execution_devices=runner.info.execution_devices,
+            preprocess_ms=preprocess_ms,
+            inference_ms=inference_ms,
+            postprocess_ms=postprocess_ms,
+            output_count=classified_count,
+            inference_count=len(candidates),
+        )
+
+    def _zero_shot_vocabulary(
+        self,
+        model_id: str,
+        bundle: ModelBundle,
+    ) -> tuple[np.ndarray, tuple[str, ...], tuple[int, ...]]:
+        """Load and memoise the baked CLIP text embeddings for a model."""
+
+        cached = self._zero_shot_cache.get(model_id)
+        if cached is None:
+            vocabulary_path = bundle.model_path.parent / "vocabulary.json"
+            cached = load_zero_shot_vocabulary(vocabulary_path)
+            self._zero_shot_cache[model_id] = cached
+        return cached
 
     def _run_pose(
         self,
@@ -906,6 +1053,7 @@ class ScenarioStreamWorker(QThread):
                         continue
                 frame_index_cache[self.scenario.id] += 1
                 detections: tuple[Detection, ...] = ()
+                raw_detections: tuple[Detection, ...] = ()
                 stage_metrics: list[StageMetric] = []
                 posture_angles: tuple[float, ...] = ()
                 for assignment in self.assignments:
@@ -914,6 +1062,13 @@ class ScenarioStreamWorker(QThread):
                     runner = active_runners[assignment.stage]
                     if assignment.stage == "classifier":
                         detections, metric = self._run_classifier(
+                            frame,
+                            detections,
+                            assignment,
+                            runner,
+                        )
+                    elif assignment.stage == "product_classifier":
+                        detections, metric = self._run_zero_shot(
                             frame,
                             detections,
                             assignment,
@@ -933,19 +1088,29 @@ class ScenarioStreamWorker(QThread):
                             runner,
                         )
                         detections = detections + stage_detections
+                        raw_detections = raw_detections + stage_detections
                     stage_metrics.append(metric)
                 postprocess_started = time.perf_counter()
                 tracked, events = self._event_tracker.update(
                     detections,
                     posture_angles=posture_angles,
+                    source_size=(frame.shape[1], frame.shape[0]),
                 )
                 event_postprocess_ms = (
                     time.perf_counter() - postprocess_started
                 ) * 1000.0
                 if event_postprocess_ms > 0.0:
+                    event_stage = next(
+                        (
+                            stage.stage
+                            for stage in self.scenario.stages
+                            if stage.stage in LOGICAL_STAGES
+                        ),
+                        "events",
+                    )
                     stage_metrics.append(
                         StageMetric(
-                            stage="events",
+                            stage=event_stage,
                             model_id="cpu",
                             requested_device="CPU",
                             execution_devices=("CPU",),
@@ -996,6 +1161,7 @@ class ScenarioStreamWorker(QThread):
                         stream_index=self.stream_index,
                         scenario_id=self.scenario.id,
                         detections=tracked,
+                        raw_detections=raw_detections,
                         events=events,
                         metrics=metrics,
                         placements=dict(self._latest_placements),

@@ -113,7 +113,9 @@ def _sha256(path: Path) -> str:
 
 def _model_files(model: dict[str, Any], root: Path) -> list[Path]:
     model_dir = root / "models" / model["id"]
-    if model["source"] == "huggingface":
+    if model["source"] in {"huggingface", "converted"}:
+        # "converted" IR is built locally, but it still lists the artefacts it
+        # needs (IR pair plus its baked vocabulary) in "files".
         names = list(model["files"])
     else:
         names = [Path(model["url_xml"]).name, Path(model["url_bin"]).name]

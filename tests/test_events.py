@@ -10,6 +10,12 @@ from app.engine.stages import Detection, Keypoint
 
 ROOT = Path(__file__).resolve().parents[1]
 
+#: Retail runs the 720x404 store-aisle clip. Zone ROIs are normalized, so the
+#: tracker must be told the source size to test membership at all.
+RETAIL_SIZE = (720, 404)
+#: Smart city runs the 768x432 traffic montage.
+SOURCE_SIZE = (768, 432)
+
 
 class EventTrackerTests(unittest.TestCase):
     @classmethod
@@ -20,38 +26,172 @@ class EventTrackerTests(unittest.TestCase):
             ROOT / "media",
         )
 
-    def test_retail_classification_and_pickup(self) -> None:
-        tracker = EventTracker(self.catalog["retail"], 0)
-        shelf = Detection(0.05, 0.25, 0.25, 0.55, "bowl", 0.8, "mixing bowl", 0.7)
-        tracked, events = tracker.update((shelf,), now=100.0)
-        self.assertEqual(tracked[0].track_id, 1)
-        self.assertIn("object_classified", {event.type for event in events})
-        transition = Detection(0.12, 0.30, 0.32, 0.60, "bowl", 0.8, "mixing bowl", 0.7)
-        tracker.update((transition,), now=100.4)
-        bridge = Detection(0.20, 0.50, 0.40, 0.80, "bowl", 0.8, "mixing bowl", 0.7)
-        tracker.update((bridge,), now=100.6)
-        moved = Detection(0.20, 0.60, 0.40, 0.90, "bowl", 0.8, "mixing bowl", 0.7)
-        tracker.update((moved,), now=100.8)
-        _, events = tracker.update((moved,), now=101.5)
-        self.assertIn("object_picked_up", {event.type for event in events})
+    def test_retail_emits_the_declared_product_name(self) -> None:
+        """Retail names the item from the declared vocabulary, not COCO.
 
-    def test_smart_city_zone_counts(self) -> None:
+        The measured case: YOLO reports ``bowl`` on every pass, but the crop is a
+        stainless steel saucepan and CLIP names it ``pot``. The event stream must
+        carry ``pot``.
+        """
+        tracker = EventTracker(self.catalog["retail"], 0)
+        rules = self.catalog["retail"].event_rules
+        stable_frames = rules["classify_min_frames"]
+        # 720x404 aisle source; this box centre lands inside the right_shelf zone.
+        on_shelf = Detection(430, 80, 500, 200, "bowl", 0.8, "pot", 0.7)
+
+        emitted: list[str] = []
+        labels: list[str] = []
+        for index in range(stable_frames):
+            tracked, events = tracker.update(
+                (on_shelf,), now=100.0 + index * 0.2, source_size=RETAIL_SIZE
+            )
+            emitted.extend(event.type for event in events)
+            labels.extend(event.label for event in events)
+        self.assertEqual(tracked[0].track_id, 1)
+        self.assertIn("object_classified", emitted)
+        # The event carries the declared product name, not the COCO class.
+        self.assertIn("pot", labels)
+        self.assertNotIn("bowl", labels)
+
+    def test_unstable_classification_is_never_surfaced(self) -> None:
+        """A label that changes every frame must never reach the operator.
+
+        This is the measured retail defect: a stationary bowl flipped through
+        Chihuahua / crash_helmet / chest 239 times in 40 seconds.
+        """
+        tracker = EventTracker(self.catalog["retail"], 0)
+        stable_frames = self.catalog["retail"].event_rules["classify_min_frames"]
+        noisy = ["pot", "plate", "cup", "glass", "vase", "kettle"]
+        surfaced: list[str] = []
+        events: list[str] = []
+        for index, label in enumerate(noisy * 3):
+            box = (430, 80, 500, 200)
+            tracked, batch = tracker.update(
+                (Detection(*box, "bowl", 0.8, label, 0.9),),
+                now=100.0 + index * 0.05, source_size=RETAIL_SIZE,
+            )
+            events.extend(event.type for event in batch)
+            surfaced.extend(item.classification for item in tracked)
+        # No churning label may ever be shown, and none may be emitted.
+        self.assertNotIn("object_classified", events)
+        self.assertEqual([value for value in surfaced if value], [])
+        self.assertGreaterEqual(len(noisy), stable_frames)
+
+    def test_classification_emitted_once_per_label_per_track(self) -> None:
+        """A stable label emits one event, not one per cooldown window."""
+        tracker = EventTracker(self.catalog["retail"], 0)
+        stable_frames = self.catalog["retail"].event_rules["classify_min_frames"]
+        emitted: list[str] = []
+        for index in range(stable_frames + 30):
+            box = (430, 80, 500, 200)
+            _, events = tracker.update(
+                (Detection(*box, "bowl", 0.8, "pot", 0.8),),
+                now=100.0 + index * 1.0, source_size=RETAIL_SIZE,
+            )
+            emitted.extend(event.type for event in events)
+        self.assertEqual(emitted.count("object_classified"), 1)
+
+    def test_zone_count_emits_once_per_track(self) -> None:
+        """A track dwelling in a lane is counted once, not every frame.
+
+        Regression: the counter had no per-track guard and re-fired each frame,
+        producing 2,459 ``vehicle_counted`` events in 25 seconds.
+        """
+
+        size = (768, 432)
         tracker = EventTracker(self.catalog["smart_city"], 1)
-        person = Detection(0.40, 0.20, 0.55, 0.80, "person", 0.9)
-        _, events = tracker.update((person,), now=200.0)
-        self.assertNotIn("person_counted", {event.type for event in events})
-        _, events = tracker.update((person,), now=200.5)
+        vehicle = Detection(600, 80, 700, 340, "vehicle", 0.9)
+        emitted = 0
+        for index in range(40):
+            _, events = tracker.update((vehicle,), now=300.0 + index * 0.05, source_size=size)
+            emitted += sum(1 for event in events if event.type == "vehicle_counted")
+        self.assertEqual(emitted, 1)
+
+    def test_machinery_false_positives_cannot_raise_business_events(self) -> None:
+        """Regression: YOLO reports shelf hardware as household objects.
+
+        Measured on the retail footage the detector produced ``microwave``,
+        ``oven`` and ``tv`` on what is shelf hardware. Those classes are not in
+        the declared inventory, so they must never raise a retail business event.
+        """
+
+        on_shelf = (430, 80, 500, 200)
+        for label in ("microwave", "oven", "tv", "laptop", "toilet"):
+            fresh = EventTracker(self.catalog["retail"], 0)
+            _, events = fresh.update(
+                (Detection(*on_shelf, label, 0.9),),
+                now=100.0,
+                source_size=RETAIL_SIZE,
+            )
+            self.assertNotIn(
+                "object_classified",
+                {event.type for event in events},
+                f"{label} must not raise a retail classification event",
+            )
+        # A declared product class still does.
+        allowed = EventTracker(self.catalog["retail"], 0)
+        for index in range(self.catalog["retail"].event_rules["classify_min_frames"]):
+            _, events = allowed.update(
+                (Detection(*on_shelf, "bowl", 0.9, "pot", 0.9),),
+                now=100.0 + index * 0.2,
+                source_size=RETAIL_SIZE,
+            )
+        self.assertIn("object_classified", {event.type for event in events})
+
+    def test_retail_event_label_is_the_plain_product_name(self) -> None:
+        """Retail must not prefix the label; it comes from a declared vocabulary."""
+        tracker = EventTracker(self.catalog["retail"], 0)
+        stable_frames = self.catalog["retail"].event_rules["classify_min_frames"]
+        events: list[BusinessEvent] = []
+        for index in range(stable_frames):
+            box = (30, 600, 240, 900)
+            box = (430, 80, 500, 200)
+            _, batch = tracker.update(
+                (Detection(*box, "bowl", 0.8, "pot", 0.6),),
+                now=100.0 + index * 0.2,
+                source_size=RETAIL_SIZE,
+            )
+            events.extend(batch)
+        labels = [event.label for event in events if event.type == "object_classified"]
+        self.assertTrue(labels)
+        self.assertEqual(labels[0], "pot")
+        self.assertNotIn("candidate", labels[0])
+
+    def test_zone_membership_uses_pixel_coordinates(self) -> None:
+        """Regression: zone ROIs are normalized, detections are in pixels.
+
+        Comparing a pixel centre straight against a 0..1 ROI made every zone
+        test fail, so ``person_counted`` and ``vehicle_counted`` could never
+        fire in the live app. These boxes are real 768x432 traffic pixels and
+        must be matched.
+        """
+
+        size = (768, 432)
+        tracker = EventTracker(self.catalog["smart_city"], 1)
+        # centre x=380/768=0.495 -> inside the crosswalk ROI [0.38, 0.0, 0.24, 1.0]
+        person = Detection(330, 80, 430, 340, "person", 0.9)
+        tracker.update((person,), now=200.0, source_size=size)
+        _, events = tracker.update((person,), now=200.5, source_size=size)
         self.assertIn("person_counted", {event.type for event in events})
-        vehicle = Detection(0.78, 0.20, 0.95, 0.80, "vehicle", 0.9)
-        _, events = tracker.update((vehicle,), now=201.0)
-        self.assertNotIn("vehicle_counted", {event.type for event in events})
-        _, events = tracker.update((vehicle,), now=201.5)
+        # centre x=650/768=0.846 -> inside outgoing_lane [0.74, 0.08, 0.24, 0.84]
+        vehicle = Detection(600, 80, 700, 340, "vehicle", 0.9)
+        tracker.update((vehicle,), now=201.0, source_size=size)
+        _, events = tracker.update((vehicle,), now=201.5, source_size=size)
         self.assertIn("vehicle_counted", {event.type for event in events})
+
+    def test_zone_membership_needs_a_source_size(self) -> None:
+        """Without a frame size the tracker must not claim a zone hit."""
+
+        tracker = EventTracker(self.catalog["smart_city"], 1)
+        person = Detection(330, 80, 430, 340, "person", 0.9)
+        tracker.update((person,), now=200.0)
+        _, events = tracker.update((person,), now=200.5)
+        self.assertNotIn("person_counted", {event.type for event in events})
 
     def test_plate_event(self) -> None:
         tracker = EventTracker(self.catalog["gov_defense"], 2)
         plate = Detection(0.4, 0.4, 0.6, 0.6, "license plate", 0.9)
-        _, events = tracker.update((plate,), now=300.0)
+        _, events = tracker.update((plate,), now=300.0, source_size=SOURCE_SIZE)
         self.assertIn("plate_detected", {event.type for event in events})
 
     def test_medical_posture_alert_respects_dwell(self) -> None:
@@ -68,6 +208,19 @@ class EventTrackerTests(unittest.TestCase):
         self.assertNotIn("posture_alert", {event.type for event in events})
         _, events = tracker.update((person,), now=401.0, posture_angles=(90.0,))
         self.assertIn("posture_alert", {event.type for event in events})
+
+    def test_tracker_reconnects_after_motion_and_one_dropout(self) -> None:
+        tracker = EventTracker(self.catalog["retail"], 0)
+        first = Detection(0.10, 0.10, 0.30, 0.30, "bowl", 0.9)
+        second = Detection(0.15, 0.10, 0.35, 0.30, "bowl", 0.9)
+        reconnected = Detection(0.20, 0.10, 0.40, 0.30, "bowl", 0.9)
+        tracked, _ = tracker.update((first,), now=100.0)
+        track_id = tracked[0].track_id
+        tracked, _ = tracker.update((second,), now=100.1)
+        self.assertEqual(tracked[0].track_id, track_id)
+        tracker.update((), now=100.2)
+        tracked, _ = tracker.update((reconnected,), now=100.3)
+        self.assertEqual(tracked[0].track_id, track_id)
 
 
 if __name__ == "__main__":

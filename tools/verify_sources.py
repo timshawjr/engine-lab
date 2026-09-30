@@ -62,12 +62,32 @@ def collect_sources(config: dict[str, Any]) -> list[Source]:
         elif model["source"] == "omz_models_bin":
             sources.append(Source(model_id, "xml", model["url_xml"]))
             sources.append(Source(model_id, "bin", model["url_bin"]))
-        else:
+        elif model["source"] != "converted":
+            # "converted" IR is built locally, so it has no downloadable IR of
+            # its own; the shared model-card check below verifies the upstream
+            # PyTorch checkpoint it was produced from instead.
             raise ValueError(f"unsupported source type for {model_id}: {model['source']}")
-        expected_card_id = model["repo"].rsplit("/", 1)[-1] if model["source"] == "huggingface" else model_id
+        expected_card_id = (
+            model["repo"].rsplit("/", 1)[-1]
+            if model["source"] in {"huggingface", "converted"}
+            else model_id
+        )
         sources.append(Source(model_id, "model-card", model["spec_url"], expected_card_id))
     for media in config["media"]:
+        if media.get("local_only"):
+            # Operator-supplied footage with no public URL. Claiming a network
+            # verification here would be a fabricated result, so it is skipped
+            # and preflight verifies the local file instead.
+            continue
         sources.append(Source(media["id"], "mp4", media["url"]))
+        for part in media.get("source_parts", []):
+            sources.append(
+                Source(
+                    f"{media['id']}:{part['id']}",
+                    "mp4",
+                    part["url"],
+                )
+            )
     return sources
 
 

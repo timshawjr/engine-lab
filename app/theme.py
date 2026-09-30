@@ -68,8 +68,8 @@ class Theme:
     bytes_per_mib: int = 1024 * 1024
     streams_real_time_fraction: float = 0.90
     real_time_equivalent_cap: float = 1.0
-    single_tile_row_max_height: int = 210
-    multi_tile_row_max_height: int = 310
+    single_tile_row_max_height: int = 280
+    multi_tile_row_max_height: int = 390
 
 
 THEME = Theme()

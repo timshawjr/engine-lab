@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QApplication,
+    QLayout,
 )
 
 from app.engine.availability import AvailabilityMatrix
@@ -323,6 +325,11 @@ class FrameCanvas(QWidget):
         font = QFont(THEME.font_family, THEME.font_overlay)
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
+        # Labels are drawn above their box, but boxes near the top edge have no
+        # room, so every such label lands on the same row and they overprint
+        # each other into an unreadable smear. Track the rows already taken and
+        # push a colliding label below them instead.
+        occupied_rows: list[tuple[float, float]] = []
         for detection in self._detections:
             rect = source_to_display_rect(
                 detection,
@@ -337,17 +344,34 @@ class FrameCanvas(QWidget):
             painter.drawRect(rect)
             parts = [f"{detection.label} {detection.confidence:.0%}"]
             if detection.classification:
-                parts.append(
-                    f"{detection.classification} {detection.classification_confidence:.0%}"
-                )
+                # The label is a member of the scenario's declared vocabulary,
+                # not a free-form guess, so it is shown as the product it is.
+                parts.append(f"{detection.classification} {detection.classification_confidence:.0%}")
             if detection.track_id is not None:
                 parts.append(f"#{detection.track_id}")
             label = " · ".join(parts)
             metrics = painter.fontMetrics()
             text_width = metrics.horizontalAdvance(label) + THEME.spacing_sm * 2
+            top = rect.top() - THEME.overlay_label_height
+            if top < video_rect.top():
+                # No room above the box: sit just inside it instead.
+                top = rect.top()
+            left = rect.left()
+            # Nudge down until this label does not overlap an earlier one.
+            for _ in range(len(occupied_rows) + 1):
+                if not any(
+                    top < row_top + THEME.overlay_label_height
+                    and row_top < top + THEME.overlay_label_height
+                    and left < row_left + row_width
+                    and row_left < left + text_width
+                    for row_top, row_left, row_width in occupied_rows
+                ):
+                    break
+                top += THEME.overlay_label_height
+            occupied_rows.append((top, left, text_width))
             label_rect = QRectF(
                 rect.left(),
-                max(video_rect.top(), rect.top() - THEME.overlay_label_height),
+                top,
                 text_width,
                 THEME.overlay_label_height,
             )
@@ -416,14 +440,21 @@ class FrameCanvas(QWidget):
 
 
 class StreamTile(QFrame):
-    def __init__(self, stream_index: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        stream_index: int,
+        parent: QWidget | None = None,
+        *,
+        compact: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.stream_index = stream_index
+        self.compact = compact
         self.setStyleSheet(
             f"background: {THEME.panel_alt}; border: 1px solid {THEME.border}; "
             f"border-radius: {THEME.radius_small}px;"
         )
-        self.setMinimumSize(260, 110)
+        self.setMinimumSize(260, 120 if compact else 110)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
             THEME.spacing_xs,
@@ -431,15 +462,35 @@ class StreamTile(QFrame):
             THEME.spacing_xs,
             THEME.spacing_xs,
         )
-        self.badge = _label(f"STREAM {stream_index} · starting", bold=True)
+        self.badge = _label(
+            f"STREAM {stream_index} · starting",
+            size=14 if compact else 18,
+            bold=True,
+        )
         self.canvas = FrameCanvas()
-        self.canvas.setMinimumSize(80, 45)
+        self.canvas.setMinimumSize(80, 70 if compact else 45)
         self.canvas.show_header = False
         self.canvas.placeholder = "starting"
-        self.metrics = _label("FPS — · inference — ms", color=THEME.text_muted)
+        self._thumbnail_visible = True
+        self.status = _label(
+            "LIVE · main video view",
+            size=14 if compact else THEME.font_regular,
+            color=THEME.text_muted,
+        )
+        self.metrics = _label(
+            "FPS — · inference — ms",
+            size=14 if compact else THEME.font_regular,
+            color=THEME.text_muted,
+        )
         layout.addWidget(self.badge)
         layout.addWidget(self.canvas, 1)
+        layout.addWidget(self.status)
         layout.addWidget(self.metrics)
+
+    def set_thumbnail_visible(self, visible: bool) -> None:
+        self._thumbnail_visible = visible
+        self.canvas.setVisible(visible)
+        self.status.setVisible(not visible)
 
     def update_stream(
         self,
@@ -448,51 +499,72 @@ class StreamTile(QFrame):
         zones: tuple[Any, ...],
         source_size: tuple[int, int],
         placements: dict[str, RunnerInfo],
+        model_ids: dict[str, str],
         metrics: PipelineFrameMetrics | None,
         event_text: str,
     ) -> None:
         if placements:
             stage_names = {
-                "detector": "D",
-                "classifier": "C",
-                "pose": "P",
-                "perimeter_detector": "PERIM",
-                "plate_detector": "PLATE",
+                "detector": "Detector",
+                "classifier": "Classifier",
+                "person_detector": "Person",
+                "pose": "Pose",
+                "perimeter_detector": "Perimeter",
+                "plate_detector": "Plate",
             }
-            compact = " · ".join(
-                f"{stage_names.get(stage, stage)} {','.join(info.execution_devices)}"
+            placement_parts = [
+                f"{stage_names.get(stage, stage)}: "
+                f"{','.join(info.execution_devices) or 'pending'}"
                 for stage, info in placements.items()
+            ]
+            placement_parts.append("Events: CPU")
+            self.badge.setText(
+                f"STREAM {self.stream_index} · " + " · ".join(placement_parts)
             )
-            self.badge.setText(f"S{self.stream_index} · {compact}")
             tooltip = "\n".join(
                 f"{stage}: requested {info.requested_device}; "
                 f"EXECUTION_DEVICES={','.join(info.execution_devices)}; "
                 f"hint={info.performance_hint}"
                 for stage, info in placements.items()
             )
-            self.setToolTip(tooltip)
+            self.setToolTip(tooltip + "\nCPU: logical event processing")
         if metrics is not None:
             self.metrics.setText(
-                f"{metrics.processing_fps:.1f} FPS · infer {metrics.inference_ms:.2f} ms · "
+                f"infer {metrics.inference_ms:.2f} ms · "
                 f"{metrics.detection_count} det"
             )
-        self.canvas.set_frame(
-            image,
-            detections,
-            zones,
-            source_size,
-            event_text,
+        self.status.setText(
+            _stream_activity_text(
+                placements,
+                model_ids,
+                len(detections),
+            )
         )
+        if self._thumbnail_visible:
+            self.canvas.set_frame(
+                image,
+                detections,
+                zones,
+                source_size,
+                "" if self.compact else event_text,
+            )
 
 
 class EngineGauge(QWidget):
-    def __init__(self, engine: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        engine: str,
+        parent: QWidget | None = None,
+        *,
+        compact: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.engine = engine
+        self.compact = compact
         self.engine_metric: EngineMetric | None = None
         self.disabled = False
         self._history: deque[tuple[float, float]] = deque()
-        self.setMinimumHeight(130)
+        self.setMinimumHeight(115 if compact else 160)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def update_metric(self, metric: EngineMetric) -> None:
@@ -553,7 +625,7 @@ class EngineGauge(QWidget):
                 provider = "PDH"
             elif "psutil" in source:
                 provider = "psutil"
-        painter.setFont(QFont(THEME.font_family, THEME.font_semibold, QFont.Weight.Bold))
+        painter.setFont(QFont(THEME.font_family, 16 if self.compact else THEME.font_semibold, QFont.Weight.Bold))
         painter.setPen(QPen(QColor(accent)))
         painter.drawText(
             QRectF(x, y, width * 0.5, 28),
@@ -563,7 +635,7 @@ class EngineGauge(QWidget):
         state = "OFF BY OPERATOR" if self.disabled else (
             "WAITING" if self.engine_metric is None else self.engine_metric.state
         )
-        painter.setFont(QFont(THEME.font_family, THEME.font_badge, QFont.Weight.DemiBold))
+        painter.setFont(QFont(THEME.font_family, 14 if self.compact else THEME.font_badge, QFont.Weight.DemiBold))
         painter.drawText(
             QRectF(x + width * 0.35, y, width * 0.65, 28),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -571,21 +643,34 @@ class EngineGauge(QWidget):
         )
         value = None if self.engine_metric is None else self.engine_metric.value_percent
         value_text = "—" if value is None else f"{value:.0f}%"
-        painter.setFont(QFont(THEME.font_family, THEME.font_engine_value, QFont.Weight.Bold))
+        value_font = QFont(THEME.font_family, 40 if self.compact else 56, QFont.Weight.Bold)
+        painter.setFont(value_font)
         painter.setPen(QPen(QColor(THEME.text_muted if self.disabled else THEME.text)))
+        value_height = max(56 if self.compact else 72, painter.fontMetrics().height() + 10)
+        value_rect = QRectF(
+            x,
+            y + (16 if self.compact else 20),
+            width * 0.62,
+            value_height,
+        )
         painter.drawText(
-            QRectF(x, y + 24, width * 0.62, 66),
+            value_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             value_text,
         )
         spark_rect = QRectF(
             x + width * 0.64,
-            y + 28,
+            y + (24 if self.compact else 28),
             width * 0.36,
-            54,
+            60 if self.compact else 70,
         )
         self._draw_sparkline(painter, spark_rect, accent)
-        bar = QRectF(x, y + 92, width, THEME.gauge_height)
+        bar = QRectF(
+            x,
+            value_rect.bottom() + 8 if self.compact else y + 124,
+            width,
+            12 if self.compact else THEME.gauge_height,
+        )
         painter.fillRect(bar, QColor(THEME.border))
         if value is not None:
             fraction = max(0.0, min(1.0, value / THEME.gauge_max_percent))
@@ -618,11 +703,62 @@ class MetricTile(QFrame):
         self.value.setText(value)
 
 
+def _short_model_name(model_id: str, stage: str = "") -> str:
+    if model_id == "cpu":
+        return {
+            "zone_event": "zone/events",
+            "posture_event": "posture/events",
+            "track_event": "track/events",
+        }.get(stage, "events")
+    replacements = (
+        ("yolo11n", "YOLO11n"),
+        ("efficientnet-b0", "EfficientNet-B0"),
+        ("person-detection-retail-0013", "person-detector"),
+        ("vehicle-license-plate-detection-barrier-0106", "plate-detector"),
+        ("human-pose-estimation-0001", "pose"),
+        ("person-vehicle-bike-detection-crossroad-1016", "traffic-detector"),
+    )
+    for source, replacement in replacements:
+        if source in model_id:
+            return replacement
+    return model_id.replace("-fp16", "").replace("-int8", "")
+
+
+def _stream_activity_text(
+    placements: dict[str, RunnerInfo],
+    model_ids: dict[str, str],
+    detection_count: int,
+) -> str:
+    if not placements:
+        return "waiting for pipeline…"
+    verbs = {
+        "detector": "detect",
+        "classifier": "classify",
+        "person_detector": "detect",
+        "pose": "estimate",
+        "perimeter_detector": "detect",
+        "plate_detector": "detect",
+    }
+    parts = [
+        f"{_short_model_name(model_ids.get(stage, stage))}: {verbs.get(stage, 'process')}"
+        for stage in placements
+    ]
+    parts.append("CPU: event logic")
+    parts.append(f"{detection_count} detections")
+    return " · ".join(parts) if parts else "waiting for pipeline…"
+
+
 class StageBreakdown(QFrame):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        compact: bool = False,
+    ) -> None:
         super().__init__(parent)
+        self.compact = compact
         self._metrics: tuple[StageMetric, ...] = ()
-        self.setMinimumHeight(70)
+        self.setMinimumHeight(60 if compact else 70)
         self.setStyleSheet(
             f"background: {THEME.panel_alt}; border: 1px solid {THEME.border}; "
             f"border-radius: {THEME.radius_small}px;"
@@ -635,33 +771,68 @@ class StageBreakdown(QFrame):
     def paintEvent(self, event: Any) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setFont(QFont(THEME.font_family, THEME.font_regular))
+        painter.setFont(QFont(THEME.font_family, 14 if self.compact else THEME.font_regular))
         painter.setPen(QPen(QColor(THEME.text_muted)))
         painter.drawText(
-            QRectF(THEME.spacing_sm, 2, self.width() - 20, 26),
+            QRectF(THEME.spacing_sm, 2, self.width() * 0.55, 26),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            "STAGE BREAKDOWN",
+            "PIPELINE PLACEMENT · duration share",
         )
+        cpu_metric = next(
+            (metric for metric in self._metrics if metric.model_id == "cpu"),
+            None,
+        )
+        if cpu_metric is not None:
+            painter.setFont(
+                QFont(
+                    THEME.font_family,
+                    10 if self.compact else 12,
+                    QFont.Weight.DemiBold,
+                )
+            )
+            painter.setPen(QPen(QColor(THEME.cpu)))
+            painter.drawText(
+                QRectF(self.width() * 0.55, 2, self.width() * 0.43 - 10, 26),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"CPU workload: {_short_model_name(cpu_metric.model_id, cpu_metric.stage)}",
+            )
         durations = [metric.inference_ms + metric.postprocess_ms for metric in self._metrics]
         total = sum(durations)
-        bar = QRectF(THEME.spacing_sm, 30, self.width() - 20, THEME.gauge_height)
+        bar = QRectF(
+            THEME.spacing_sm,
+            26 if self.compact else 30,
+            self.width() - 20,
+            22 if self.compact else THEME.gauge_height,
+        )
         painter.fillRect(bar, QColor(THEME.border))
-        if total <= 0.0 or not self._metrics:
-            return
-        cursor = bar.left()
-        colors = (THEME.npu, THEME.gpu, THEME.cpu, THEME.warning)
-        for index, (metric, duration) in enumerate(zip(self._metrics, durations)):
-            width = bar.width() * duration / total
-            segment = QRectF(cursor, bar.top(), width, bar.height())
-            painter.fillRect(segment, QColor(colors[index % len(colors)]))
-            if width >= 60:
-                painter.setPen(QPen(QColor(THEME.overlay_fill)))
-                painter.drawText(
-                    segment,
-                    Qt.AlignmentFlag.AlignCenter,
-                    metric.stage,
-                )
-            cursor += width
+        if total > 0.0 and self._metrics:
+            cursor = bar.left()
+            colors = (THEME.npu, THEME.gpu, THEME.cpu, THEME.warning)
+            for index, (metric, duration) in enumerate(zip(self._metrics, durations)):
+                width = bar.width() * duration / total
+                segment = QRectF(cursor, bar.top(), width, bar.height())
+                painter.fillRect(segment, QColor(colors[index % len(colors)]))
+                if width >= 60:
+                    device = metric.execution_devices[0] if metric.execution_devices else "pending"
+                    label = f"{_short_model_name(metric.model_id, metric.stage)} → {device}"
+                    painter.setFont(
+                        QFont(
+                            THEME.font_family,
+                            10 if self.compact else 12,
+                            QFont.Weight.DemiBold,
+                        )
+                    )
+                    painter.setPen(QPen(QColor(THEME.overlay_fill)))
+                    painter.drawText(
+                        segment,
+                        Qt.AlignmentFlag.AlignCenter,
+                        painter.fontMetrics().elidedText(
+                            label,
+                            Qt.TextElideMode.ElideRight,
+                            int(segment.width() - 8),
+                        ),
+                    )
+                cursor += width
 
 
 class OperatorOverlay(QDialog):
@@ -909,6 +1080,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(f"background: {THEME.background}; color: {THEME.text};")
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
+        screen = QApplication.primaryScreen()
+        available_height = screen.availableGeometry().height() if screen is not None else 1080
+        self.compact_layout = available_height < 1600
         self.demo_page = QWidget()
         self.attract_page = QWidget()
         self.stack.addWidget(self.demo_page)
@@ -920,12 +1094,12 @@ class MainWindow(QMainWindow):
     def _build_demo_page(self) -> None:
         root = QVBoxLayout(self.demo_page)
         root.setContentsMargins(
-            THEME.spacing_md,
-            THEME.spacing_md,
-            THEME.spacing_md,
-            THEME.spacing_md,
+            THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
+            THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
+            THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
+            THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
         )
-        root.setSpacing(THEME.spacing_sm)
+        root.setSpacing(THEME.spacing_xs if self.compact_layout else THEME.spacing_sm)
         hardware = _hardware_description()
         peak_text, peak_source = _platform_peak(hardware["cpu"], self.profiles_path)
         header = QHBoxLayout()
@@ -937,10 +1111,17 @@ class MainWindow(QMainWindow):
             THEME.spacing_md,
             THEME.spacing_sm,
         )
-        platform_layout.addWidget(_label(hardware["cpu"], bold=True))
+        platform_layout.addWidget(
+            _label(
+                hardware["cpu"],
+                size=14 if self.compact_layout else THEME.font_regular,
+                bold=True,
+            )
+        )
         platform_layout.addWidget(
             _label(
                 f"iGPU · {hardware['gpu']} · {hardware['gpu_driver']}",
+                size=14 if self.compact_layout else THEME.font_regular,
                 color=THEME.text_muted,
             )
         )
@@ -948,10 +1129,15 @@ class MainWindow(QMainWindow):
             _label(
                 f"NPU · {hardware['npu']} · {hardware['npu_driver']} · "
                 f"{hardware['physical_cores']}P/{hardware['logical_cores']}L",
+                size=14 if self.compact_layout else THEME.font_regular,
                 color=THEME.text_muted,
             )
         )
-        peak_label = _label(peak_text, color=THEME.text_muted)
+        peak_label = _label(
+            peak_text,
+            size=14 if self.compact_layout else THEME.font_regular,
+            color=THEME.text_muted,
+        )
         peak_label.setToolTip(peak_source)
         self.peak_base_text = peak_text
         self.peak_label = peak_label
@@ -966,8 +1152,16 @@ class MainWindow(QMainWindow):
             THEME.spacing_md,
             THEME.spacing_sm,
         )
-        self.title_label = _label(self.scenario.title, size=THEME.font_title, bold=True)
-        self.business_label = _label(self.scenario.business_line, color=THEME.text_muted)
+        self.title_label = _label(
+            self.scenario.title,
+            size=28 if self.compact_layout else THEME.font_title,
+            bold=True,
+        )
+        self.business_label = _label(
+            self.scenario.business_line,
+            size=16 if self.compact_layout else THEME.font_regular,
+            color=THEME.text_muted,
+        )
         title_layout.addWidget(self.title_label)
         title_layout.addWidget(self.business_label)
         header.addWidget(title_panel, 5)
@@ -994,14 +1188,18 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self.clock_label)
         self.fallback_label = _label("FALLBACK", color=THEME.danger, bold=True)
         self.fallback_label.hide()
+        self.failover_label = _label("", color=THEME.warning, bold=True)
+        self.failover_label.hide()
         status_layout.addWidget(self.mode_label)
         status_layout.addLayout(status_row)
+        status_layout.addWidget(self.failover_label)
         status_layout.addWidget(self.fallback_label)
         header.addWidget(status_panel, 3)
         root.addLayout(header)
 
         self.ticker_label = _label(
             self.scenario.ticker[0],
+            size=16 if self.compact_layout else THEME.font_regular,
             color=THEME.gpu,
             bold=True,
         )
@@ -1020,7 +1218,7 @@ class MainWindow(QMainWindow):
         self.main_canvas = FrameCanvas()
         self.main_canvas.header_text = self.scenario.title
         video_layout.addWidget(self.main_canvas)
-        main_row.addWidget(video_panel, 7)
+        main_row.addWidget(video_panel, 6)
 
         gauge_panel = QFrame()
         gauge_layout = QVBoxLayout(gauge_panel)
@@ -1028,11 +1226,21 @@ class MainWindow(QMainWindow):
         gauge_layout.setSpacing(THEME.spacing_sm)
         self.gauges: dict[str, EngineGauge] = {}
         for engine in ("NPU", "GPU", "CPU"):
-            gauge = EngineGauge(engine)
+            gauge = EngineGauge(engine, compact=self.compact_layout)
             self.gauges[engine] = gauge
             gauge_layout.addWidget(gauge, 1)
-        main_row.addWidget(gauge_panel, 3)
-        root.addLayout(main_row, 1)
+        main_row.addWidget(gauge_panel, 4)
+        if self.compact_layout:
+            video_panel.setMaximumHeight(430)
+            gauge_panel.setMaximumHeight(430)
+        main_container = QWidget(self.demo_page)
+        main_container_layout = QVBoxLayout(main_container)
+        main_container_layout.setContentsMargins(0, 0, 0, 0)
+        main_container_layout.setSpacing(0)
+        main_container_layout.addLayout(main_row)
+        if self.compact_layout:
+            main_container.setMaximumHeight(430)
+        root.addWidget(main_container, 1)
 
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(THEME.spacing_md)
@@ -1045,12 +1253,15 @@ class MainWindow(QMainWindow):
             THEME.spacing_sm,
         )
         tile_layout.addWidget(_label("LIVE STREAM TILES", bold=True))
-        self.stage_breakdown = StageBreakdown()
+        self.stage_breakdown = StageBreakdown(compact=self.compact_layout)
         tile_layout.addWidget(self.stage_breakdown)
         self.tile_grid = QGridLayout()
         self.tile_grid.setSpacing(THEME.spacing_sm)
         tile_layout.addLayout(self.tile_grid, 1)
-        self.tiles = [StreamTile(index) for index in range(max(DENSITIES))]
+        self.tiles = [
+            StreamTile(index, compact=self.compact_layout)
+            for index in range(max(DENSITIES))
+        ]
         bottom_row.addWidget(tile_panel, 7)
 
         metrics_panel = QFrame()
@@ -1083,6 +1294,7 @@ class MainWindow(QMainWindow):
         bottom_row.addWidget(metrics_panel, 3)
         self.bottom_panels = (tile_panel, metrics_panel)
         root.addLayout(bottom_row, 0)
+        bottom_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self.status_label = _label(
             "1-4 scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
             color=THEME.text_muted,
@@ -1172,6 +1384,31 @@ class MainWindow(QMainWindow):
     def _update_policy_header(self) -> None:
         self.policy_snapshot = self.policy.snapshot()
         self.mode_label.setText(self.policy_snapshot.label)
+        gpu_failover = (
+            self.policy_snapshot.mode in {DeviceMode.SPREAD, DeviceMode.SPLIT}
+            and not self.policy_snapshot.gpu_enabled
+            and self.policy_snapshot.npu_enabled
+        )
+        npu_failover = (
+            self.policy_snapshot.mode in {DeviceMode.SPREAD, DeviceMode.SPLIT}
+            and not self.policy_snapshot.npu_enabled
+            and self.policy_snapshot.gpu_enabled
+        )
+        cpu_fallback = (
+            self.policy_snapshot.mode in {DeviceMode.SPREAD, DeviceMode.SPLIT}
+            and not self.policy_snapshot.gpu_enabled
+            and not self.policy_snapshot.npu_enabled
+        )
+        self.failover_label.setText(
+            "GPU OFF · NPU FAILOVER"
+            if gpu_failover
+            else "NPU OFF · GPU FAILOVER"
+            if npu_failover
+            else "NPU/GPU OFF · CPU FALLBACK"
+            if cpu_fallback
+            else ""
+        )
+        self.failover_label.setVisible(bool(self.failover_label.text()))
         self.video_clock.set_target_fps(
             THEME.tile_display_fps if self.policy_snapshot.density >= 4 else 0.0
         )
@@ -1186,9 +1423,9 @@ class MainWindow(QMainWindow):
         columns = min(density, 4)
         rows = (density + columns - 1) // columns
         maximum_height = (
-            THEME.single_tile_row_max_height
+            (270 if self.compact_layout else THEME.single_tile_row_max_height)
             if rows == 1
-            else THEME.multi_tile_row_max_height
+            else (390 if self.compact_layout else THEME.multi_tile_row_max_height)
         )
         for panel in self.bottom_panels:
             panel.setMaximumHeight(maximum_height)
@@ -1198,6 +1435,7 @@ class MainWindow(QMainWindow):
         for index in range(density):
             self.tile_grid.addWidget(self.tiles[index], index // columns, index % columns)
             self.tiles[index].show()
+            self.tiles[index].set_thumbnail_visible(self.policy_snapshot.density > 1)
         for row in range(rows):
             self.tile_grid.setRowStretch(row, 1)
         for column in range(columns):
@@ -1411,6 +1649,7 @@ class MainWindow(QMainWindow):
                 self.scenario.zones,
                 self.latest_image_size,
                 self.stream_placements.get(index, {}),
+                {stage.stage: stage.model_id for stage in self.scenario.stages},
                 self.stream_metrics.get(index),
                 self.stream_event_text.get(index, ""),
             )
@@ -1461,6 +1700,8 @@ class MainWindow(QMainWindow):
             placements[stage] = RunnerInfo(**values)
         self.stream_placements[index] = placements
         self._update_runtime_gops_label()
+        if index == 0:
+            self._update_pipeline_metrics()
         self.stream_fallbacks[index] = set(data.get("fallbacks", []))
         self._refresh_fallback_display()
         pending = self.pending_acks.get(sequence)
@@ -1533,7 +1774,18 @@ class MainWindow(QMainWindow):
             )
             for item in metrics
         )
-        self.real_time_tile.set_value(f"{real_time} / {self.policy_snapshot.density}")
+        primary = next(
+            (item for item in metrics if item.stream_index == 0),
+            None,
+        )
+        self.real_time_tile.set_value(
+            "—" if primary is None else f"{primary.processing_fps:.1f} FPS"
+        )
+        self.real_time_tile.setToolTip(
+            "Stream 0 processing FPS · "
+            f"{real_time}/{self.policy_snapshot.density} streams meet the "
+            f"{THEME.streams_real_time_fraction:.0%} real-time threshold"
+        )
         event_counts: dict[str, int] = {}
         for item in metrics:
             for event_type, count in item.event_counts_60s.items():
@@ -1547,7 +1799,18 @@ class MainWindow(QMainWindow):
             ),
             (),
         )
-        self.stage_breakdown.set_metrics(tuple(primary_stages))
+        placements = self.stream_placements.get(0, {})
+        primary_stages = tuple(
+            replace(
+                metric,
+                requested_device=placements[metric.stage].requested_device,
+                execution_devices=placements[metric.stage].execution_devices,
+            )
+            if metric.stage in placements
+            else metric
+            for metric in primary_stages
+        )
+        self.stage_breakdown.set_metrics(primary_stages)
 
     def _on_stream_failed(self, index: int, traceback_text: str) -> None:
         self.last_error = f"stream {index}: {traceback_text}"

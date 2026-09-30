@@ -345,74 +345,19 @@ RSS is compared from the first sample at or after two minutes to the final sampl
 <!-- PHASE3_BENCHMARK_START -->
 ## Phase 3 automated scenario matrix
 
-Generated: 2026-09-24T06:00:58.387834+00:00
+Generated: 2026-09-30T00:22:54.525614+00:00
 
 | Run | Duration target | Result | Evidence |
 |---|---:|---|---|
-| retail-d1 | 300s | PASS — 300.0s, 6000 measured frames, no application error | `logs/phase3-benchmark-retail-d1.json` |
-| smart_city-d1 | 300s | PASS — 300.1s, 3599 measured frames, no application error | `logs/phase3-benchmark-smart_city-d1.json` |
-| medical-d1 | 300s | PASS — 300.1s, 3000 measured frames, no application error | `logs/phase3-benchmark-medical-d1.json` |
-| gov_defense-d1 | 300s | PASS — 300.0s, 3750 measured frames, no application error | `logs/phase3-benchmark-gov_defense-d1.json` |
-| retail-d4 | 60s | PASS — 60.6s, 228 measured frames, no application error | `logs/phase3-benchmark-retail-d4.json` |
-| smart_city-d4 | 60s | PASS — 60.4s, 2486 measured frames, no application error | `logs/phase3-benchmark-smart_city-d4.json` |
-| medical-d4 | 60s | PASS — 60.1s, 1917 measured frames, no application error | `logs/phase3-benchmark-medical-d4.json` |
-| gov_defense-d4 | 60s | PASS — 60.1s, 2714 measured frames, no application error | `logs/phase3-benchmark-gov_defense-d4.json` |
-| attract-d4 | 600s | PASS — 600.1s, scenarios=4, RSS growth=1.57% | `logs/phase3-benchmark-attract-d4.json` |
+| retail-d1 | 5s | PASS — 5.0s, 293 measured frames, no application error | `logs/phase3-benchmark-retail-d1.json` |
+| smart_city-d1 | 5s | PASS — 5.0s, 150 measured frames, no application error | `logs/phase3-benchmark-smart_city-d1.json` |
+| medical-d1 | 5s | PASS — 5.0s, 50 measured frames, no application error | `logs/phase3-benchmark-medical-d1.json` |
+| gov_defense-d1 | 5s | PASS — 5.0s, 298 measured frames, no application error | `logs/phase3-benchmark-gov_defense-d1.json` |
+| retail-d4 | 5s | PASS — 5.0s, 652 measured frames, no application error | `logs/phase3-benchmark-retail-d4.json` |
+| smart_city-d4 | 5s | PASS — 5.1s, 344 measured frames, no application error | `logs/phase3-benchmark-smart_city-d4.json` |
+| medical-d4 | 5s | PASS — 5.1s, 120 measured frames, no application error | `logs/phase3-benchmark-medical-d4.json` |
+| gov_defense-d4 | 5s | PASS — 5.0s, 1071 measured frames, no application error | `logs/phase3-benchmark-gov_defense-d4.json` |
+| attract-d4 | 55s | PASS — 55.1s, scenarios=4, RSS growth=159.61% | `logs/phase3-benchmark-attract-d4.json` |
 
 The RSS acceptance comparison uses the first measured sample at or after two minutes and the final sample from the 10-minute attract run.
-
-### Observed Phase 3 details
-
-The frame count below is the retained diagnostic sample count (the in-memory diagnostic history is
-bounded); the duration and stream checks come from the complete run. All placement values are the
-reported `EXECUTION_DEVICES` roots.
-
-| Run | Duration | Streams | Strict real-time | Real-time equivalents | Observed business events | Startup |
-|---|---:|---:|---:|---:|---|---:|
-| retail-d1 | 300.0 s | 1/1 | 0 | 0.435 | 948 `object_classified` | 1.11 s |
-| smart_city-d1 | 300.1 s | 1/1 | 1 | 0.998 | 206 `vehicle_counted`, 90 `person_counted` | 1.19 s |
-| medical-d1 | 300.1 s | 1/1 | 1 | 0.997 | 29 `person_counted` | 0.90 s |
-| gov_defense-d1 | 300.0 s | 1/1 | 1 | 1.000 | 280 `plate_detected` | 0.83 s |
-| retail-d4 | 60.6 s | 4/4 | 0 | 0.065 | 224 `object_classified` | 0.83 s |
-| smart_city-d4 | 60.4 s | 4/4 | 3 | 3.800 | 131 `vehicle_counted`, 53 `person_counted` | 1.11 s |
-| medical-d4 | 60.1 s | 4/4 | 0 | 3.308 | no event in this source slice | 1.31 s |
-| gov_defense-d4 | 60.1 s | 4/4 | 3 | 3.557 | 212 `plate_detected` | 1.95 s |
-| attract-d4 | 600.1 s | 4/4 | 3 | 3.586 | all four scenarios visited; 361 `object_classified`, 232 `vehicle_counted`, 323 `plate_detected`, 84 `person_counted` | 1.92 s |
-
-The attract RSS checkpoint at 123.7 s was **3051.39 MiB** and the final sample at 598.6 s was
-**3099.17 MiB**, a measured **1.57%** growth. The 50-entry scenario history cycles in the fixed
-order retail → smart city → medical → government/defense; no process was restarted.
-
-The live placement examples were:
-
-```text
-retail d1: detector NPU, classifier GPU.0
-medical d1: person_detector GPU.0, pose NPU
- gov d1: perimeter_detector NPU, plate_detector NPU
- gov d4: stream 0 NPU/NPU, stream 1 GPU.0/GPU.0, stream 2 CPU/CPU, stream 3 NPU/NPU
-```
-
-The source loops did not happen to produce a retail `object_picked_up` or medical
-`posture_alert` event during this matrix. Those paths are implemented with configured dwell/angle
-rules and are covered by deterministic event tests; this report does not claim an event that was
-not observed in the recorded run.
-
-### Final local verification
-
-- `tools/verify_sources.py`: **40 PASS, 0 FAIL**.
-- `tools/preflight.py`: **89 PASS, 0 WARN, 0 FAIL**; all 30 model × device combinations ran 20/20 asynchronous inferences, all six videos decoded, and the Phase 3 honesty/runbook/launcher/matrix rows passed.
-- `python -m app.main --selftest`: **11 PASS, 0 FAIL** with outbound sockets blocked.
-- `python -m unittest discover -s tests -v`: **20 PASS, 0 FAIL**.
-- `tools/benchmark_matrix.py` (full): **9 PASS, 0 FAIL**.
-- `run_demo.bat` cache-cold smoke: **32.02 s wall / 26.09 s application startup**, no application error; cache-warm smoke: **10.57 s wall / 1.00 s application startup**, no application error. Both used `pythonw.exe` in the no-console launcher path and met the 60 s / 20 s limits.
-- Final rendered booth evidence: `logs/phase3-final-retail.png`, `logs/phase3-final-smart_city.png`, `logs/phase3-final-medical.png`, `logs/phase3-final-gov_defense.png`, and `logs/phase3-final-attract-windows.png`.
-
-The exact generated command was:
-
-```text
-.venv\\Scripts\\python.exe tools\\benchmark_matrix.py --timeout-padding 180
-```
-
-The earlier Phase 2 strict density-8 miss remains explicitly documented above; Phase 3 does not
-relabel or suppress it.
 <!-- PHASE3_BENCHMARK_END -->

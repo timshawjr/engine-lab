@@ -442,8 +442,13 @@ def postprocess_ssd(
     )
     boxes_source = np.empty_like(boxes_model)
     for index, box in enumerate(boxes_model):
-        x1, y1 = transform.point_to_source(float(box[0]), float(box[1]))
-        x2, y2 = transform.point_to_source(float(box[2]), float(box[3]))
+        # OMZ SSD detection locations are normalized to [0, 1]. The OMZ
+        # image path uses a direct resize, so normalized coordinates must be
+        # mapped to source pixels before NMS, tracking, zones, and overlays.
+        x1 = float(box[0]) * transform.original_width
+        y1 = float(box[1]) * transform.original_height
+        x2 = float(box[2]) * transform.original_width
+        y2 = float(box[3]) * transform.original_height
         boxes_source[index] = (
             np.clip(x1, 0.0, transform.original_width),
             np.clip(y1, 0.0, transform.original_height),
@@ -497,6 +502,196 @@ def postprocess_classification(
     return tuple((labels[int(index)], float(probabilities[int(index)])) for index in indices)
 
 
+#: CLIP's own normalisation constants, from the openai/clip-vit-base-patch32
+#: preprocessor config. They are not ImageNet statistics; using the wrong pair
+#: silently degrades every score.
+CLIP_PIXEL_MEAN = (0.48145466, 0.4578275, 0.40821073)
+CLIP_PIXEL_STD = (0.26862954, 0.26130258, 0.27577711)
+CLIP_IMAGE_SIZE = 224
+
+def preprocess_clip(crop: np.ndarray) -> np.ndarray:
+    """Prepare one BGR crop for the CLIP vision tower.
+
+    Reproduces ``CLIPImageProcessor`` exactly: convert to RGB, resize so the
+    shortest edge is 224 with bicubic interpolation, centre-crop 224, scale to
+    0..1, then normalise with CLIP's mean/std. The tensor is returned as NCHW
+    float32 ready for ``{0: tensor}``.
+
+    ``tools/build_clip_zero_shot.py`` bakes the text embeddings using the
+    HuggingFace processor, so this function must stay byte-compatible with it.
+    The equivalence is covered by a regression test.
+    """
+
+    if crop.ndim != 3 or crop.shape[2] != 3:
+        raise ValueError(f"expected BGR crop, found shape {crop.shape}")
+    if crop.shape[0] < 2 or crop.shape[1] < 2:
+        raise ValueError(f"crop too small to classify: {crop.shape[:2]}")
+    rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+    height, width = rgb.shape[:2]
+    scale = CLIP_IMAGE_SIZE / min(height, width)
+    resized_width = max(CLIP_IMAGE_SIZE, int(round(width * scale)))
+    resized_height = max(CLIP_IMAGE_SIZE, int(round(height * scale)))
+    resized = cv2.resize(
+        rgb,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_CUBIC,
+    )
+    left = (resized_width - CLIP_IMAGE_SIZE) // 2
+    top = (resized_height - CLIP_IMAGE_SIZE) // 2
+    patch = resized[
+        top : top + CLIP_IMAGE_SIZE, left : left + CLIP_IMAGE_SIZE
+    ].astype(np.float32) / 255.0
+    mean = np.asarray(CLIP_PIXEL_MEAN, dtype=np.float32)
+    std = np.asarray(CLIP_PIXEL_STD, dtype=np.float32)
+    normalised = (patch - mean) / std
+    return np.ascontiguousarray(normalised.transpose(2, 0, 1)[None, ...])
+
+
+def postprocess_zero_shot(
+    image_embedding: np.ndarray,
+    text_embeddings: np.ndarray,
+    labels: Sequence[str],
+    templates_per_label: Sequence[int],
+    top_k: int,
+) -> tuple[tuple[str, float], ...]:
+    """Score one image embedding against the pre-computed text embeddings.
+
+    ``text_embeddings`` are unit-length CLIP text embeddings produced once by
+    ``tools/build_clip_zero_shot.py``. Each label owns one or more prompt
+    templates; the per-template probabilities are averaged so a single awkward
+    phrasing cannot decide the answer.
+    """
+
+    image = np.asarray(image_embedding, dtype=np.float32).reshape(-1)
+    text = np.asarray(text_embeddings, dtype=np.float32)
+    if text.ndim != 2:
+        raise ValueError(f"expected 2-D text embeddings, found {text.shape}")
+    if image.size != text.shape[1]:
+        raise ValueError(
+            f"embedding size mismatch: image {image.size}, text {text.shape[1]}"
+        )
+    if len(labels) != len(templates_per_label):
+        raise ValueError("labels and template counts must be the same length")
+    if int(sum(templates_per_label)) != text.shape[0]:
+        raise ValueError(
+            f"template counts total {sum(templates_per_label)} "
+            f"but {text.shape[0]} text embeddings were provided"
+        )
+    norm = float(np.linalg.norm(image))
+    if not np.isfinite(norm) or norm <= 0.0:
+        raise ValueError("image embedding is not a usable vector")
+    similarity = 100.0 * (text @ (image / norm))
+    shifted = similarity - float(np.max(similarity))
+    probabilities = np.exp(shifted)
+    probabilities /= np.sum(probabilities)
+
+    per_label: list[tuple[str, float]] = []
+    start = 0
+    for label, count in zip(labels, templates_per_label):
+        per_label.append(
+            (label, float(np.mean(probabilities[start : start + count])))
+        )
+        start += count
+    per_label.sort(key=lambda item: item[1], reverse=True)
+    return tuple(per_label[: max(1, top_k)])
+
+
+def load_zero_shot_vocabulary(path: Path) -> tuple[np.ndarray, tuple[str, ...], tuple[int, ...]]:
+    """Load the baked text embeddings and their label/template layout."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    embeddings = np.load(path.with_name("text_embeddings.npy")).astype(np.float32)
+    labels = tuple(str(value) for value in payload["labels"])
+    counts = tuple(int(value) for value in payload["template_counts"])
+    if not labels or not counts:
+        raise ValueError(f"empty zero-shot vocabulary in {path}")
+    if embeddings.shape[0] != sum(counts):
+        raise ValueError(
+            f"{embeddings.shape[0]} embeddings do not cover {sum(counts)} prompts"
+        )
+    return embeddings, labels, counts
+
+
+_POSE_LIMBS = (
+    (15, 13),
+    (13, 11),
+    (16, 14),
+    (14, 12),
+    (11, 12),
+    (5, 11),
+    (6, 12),
+    (5, 6),
+    (5, 7),
+    (6, 8),
+    (7, 9),
+    (8, 10),
+    (1, 2),
+    (0, 1),
+    (0, 14),
+    (0, 15),
+    (15, 17),
+    (2, 16),
+    (5, 17),
+)
+
+
+def _pose_candidates(
+    heatmap: np.ndarray,
+    limit: int = 3,
+) -> tuple[tuple[int, int, float], ...]:
+    flat = np.asarray(heatmap).reshape(-1)
+    count = min(max(1, limit), flat.size)
+    order = np.argsort(flat)[::-1]
+    selected: list[tuple[int, int, float]] = []
+    for flat_index in order[: min(flat.size, max(limit * 4, limit))]:
+        y_index, x_index = np.unravel_index(int(flat_index), heatmap.shape)
+        if any(
+            (x_index - old_x) ** 2 + (y_index - old_y) ** 2 < 4
+            for old_x, old_y, _ in selected
+        ):
+            continue
+        selected.append((int(x_index), int(y_index), float(flat[flat_index])))
+        if len(selected) >= count:
+            break
+    return tuple(selected)
+
+
+def _paf_limb_score(
+    pafs: np.ndarray,
+    start: tuple[int, int, float],
+    end: tuple[int, int, float],
+    limb_index: int,
+    heatmap_shape: tuple[int, int],
+) -> float:
+    if pafs.ndim != 3 or 2 * limb_index + 1 >= pafs.shape[0]:
+        return 0.0
+    heatmap_height, heatmap_width = heatmap_shape
+    paf_height, paf_width = pafs.shape[-2:]
+    scale_x = paf_width / max(1, heatmap_width)
+    scale_y = paf_height / max(1, heatmap_height)
+    start_x = start[0] * scale_x
+    start_y = start[1] * scale_y
+    end_x = end[0] * scale_x
+    end_y = end[1] * scale_y
+    vector_x = end_x - start_x
+    vector_y = end_y - start_y
+    length = float(np.hypot(vector_x, vector_y))
+    if length < 1.0:
+        return 0.0
+    unit_x = vector_x / length
+    unit_y = vector_y / length
+    channel_x = np.asarray(pafs[2 * limb_index], dtype=np.float32)
+    channel_y = np.asarray(pafs[2 * limb_index + 1], dtype=np.float32)
+    scores: list[float] = []
+    for ratio in np.linspace(0.1, 0.9, 9):
+        x = int(round(start_x + vector_x * ratio))
+        y = int(round(start_y + vector_y * ratio))
+        x = min(max(x, 0), paf_width - 1)
+        y = min(max(y, 0), paf_height - 1)
+        scores.append(float(channel_x[y, x] * unit_x + channel_y[y, x] * unit_y))
+    return max(0.0, min(1.0, float(np.mean(scores))))
+
+
 def decode_pose(
     heatmap_output: np.ndarray,
     paf_output: np.ndarray,
@@ -504,6 +699,8 @@ def decode_pose(
     transform: LetterboxTransform,
     confidence_threshold: float,
 ) -> tuple[Keypoint, ...]:
+    """Decode one pose while using PAF affinity to choose coherent peaks."""
+
     heatmaps = np.asarray(heatmap_output)
     pafs = np.asarray(paf_output)
     if heatmaps.ndim == 4:
@@ -518,24 +715,96 @@ def decode_pose(
         raise ValueError(
             f"pose PAF {pafs.shape} does not cover {len(keypoint_names)} keypoints"
         )
+
+    candidates = [
+        _pose_candidates(heatmaps[index], limit=3)
+        for index in range(len(keypoint_names))
+    ]
+    selected: list[tuple[int, int, float] | None] = [None] * len(keypoint_names)
+    anchor_index, anchor_candidates = max(
+        enumerate(candidates),
+        key=lambda item: item[1][0][2] if item[1] else float("-inf"),
+    )
+    if anchor_candidates:
+        selected[anchor_index] = anchor_candidates[0]
+
+    for limb_index, (left, right) in enumerate(_POSE_LIMBS):
+        if left >= len(selected) or right >= len(selected):
+            continue
+        left_selected = selected[left]
+        right_selected = selected[right]
+        if left_selected is not None and right_selected is not None:
+            continue
+        if left_selected is not None:
+            _score, peak = max(
+                (
+                    (
+                        _paf_limb_score(
+                            pafs,
+                            left_selected,
+                            candidate,
+                            limb_index,
+                            heatmaps.shape[-2:],
+                        )
+                        + 0.25 * candidate[2],
+                        candidate,
+                    )
+                    for candidate in candidates[right]
+                )
+            )
+            selected[right] = peak
+        elif right_selected is not None:
+            _score, peak = max(
+                (
+                    (
+                        _paf_limb_score(
+                            pafs,
+                            candidate,
+                            right_selected,
+                            limb_index,
+                            heatmaps.shape[-2:],
+                        )
+                        + 0.25 * candidate[2],
+                        candidate,
+                    )
+                    for candidate in candidates[left]
+                )
+            )
+            selected[left] = peak
+        else:
+            best_pair: tuple[
+                float,
+                tuple[int, int, float],
+                tuple[int, int, float],
+            ] | None = None
+            for left_candidate in candidates[left]:
+                for right_candidate in candidates[right]:
+                    score = _paf_limb_score(
+                        pafs,
+                        left_candidate,
+                        right_candidate,
+                        limb_index,
+                        heatmaps.shape[-2:],
+                    ) + 0.125 * (left_candidate[2] + right_candidate[2])
+                    pair = (score, left_candidate, right_candidate)
+                    if best_pair is None or pair[0] > best_pair[0]:
+                        best_pair = pair
+            if best_pair is not None:
+                selected[left] = best_pair[1]
+                selected[right] = best_pair[2]
+
     keypoints: list[Keypoint] = []
     for keypoint_index, name in enumerate(keypoint_names):
-        heatmap = heatmaps[keypoint_index]
-        flat_index = int(np.argmax(heatmap))
-        y_index, x_index = np.unravel_index(flat_index, heatmap.shape)
-        confidence = float(heatmap[y_index, x_index])
-        model_x = (x_index + 0.5) * (transform.model_width / heatmap.shape[1])
-        model_y = (y_index + 0.5) * (transform.model_height / heatmap.shape[0])
+        peak = selected[keypoint_index] or candidates[keypoint_index][0]
+        x_index, y_index, confidence = peak
+        model_x = (x_index + 0.5) * (transform.model_width / heatmaps.shape[-1])
+        model_y = (y_index + 0.5) * (transform.model_height / heatmaps.shape[-2])
         source_x, source_y = transform.point_to_source(model_x, model_y)
         keypoints.append(
             Keypoint(
                 name=name,
-                x=float(
-                    np.clip(source_x, 0.0, transform.original_width)
-                ),
-                y=float(
-                    np.clip(source_y, 0.0, transform.original_height)
-                ),
+                x=float(np.clip(source_x, 0.0, transform.original_width)),
+                y=float(np.clip(source_y, 0.0, transform.original_height)),
                 confidence=confidence,
             )
         )

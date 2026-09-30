@@ -93,6 +93,30 @@
       "spec_url": "https://huggingface.co/OpenVINO/efficientnet_b0-int8-ov"
     },
     {
+      "id": "clip-vision-patch32",
+      "role": "classifier",
+      "task": "zero_shot_classification",
+      "prec": "FP16",
+      "source": "converted",
+      "repo": "openai/clip-vit-base-patch32",
+      "conversion_tool": "tools/build_clip_zero_shot.py + tools/convert_clip_onnx.py",
+      "conversion_note": "Vision tower only, exported at static 1x3x224x224 and FP16-compressed. The text tower is not shipped: the declared vocabulary in tools/clip_vocabulary.py is fixed configuration, so its embeddings are baked once by the build tool and the app runs no tokenizer and no text encoder at runtime.",      "files": [
+        "clip-vision.xml",
+        "clip-vision.bin",
+        "text_embeddings.npy",
+        "vocabulary.json"
+      ],
+      "input_shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "labels": "declared-store-vocabulary",
+      "gflops": null,
+      "spec_url": "https://huggingface.co/openai/clip-vit-base-patch32"
+    },
+    {
       "id": "person-detection-retail-0013",
       "role": "detector",
       "task": "object_detection",
@@ -210,15 +234,51 @@
     },
     {
       "id": "traffic",
-      "file": "person-bicycle-car-detection.mp4",
-      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/person-bicycle-car-detection.mp4",
-      "verified": "200 video/mp4 (range GET 206)"
+      "file": "smart-city-traffic-montage.mp4",
+      "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
+      "verified": "200 video/mp4 (range GET 206); local 30 FPS action montage of verified Mixkit traffic sources",
+      "source_parts": [
+        {
+          "id": "mixkit-4000-busy-street.mp4",
+          "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/busy-street-in-the-city-4000/",
+          "license": "https://mixkit.co/license/#videoFree"
+        },
+        {
+          "id": "mixkit-4272-traffic-light.mp4",
+          "url": "https://assets.mixkit.co/videos/4272/4272-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/traffic-light-directing-traffic-4272/",
+          "license": "https://mixkit.co/license/#videoFree"
+        },
+        {
+          "id": "mixkit-4343-crossroads.mp4",
+          "url": "https://assets.mixkit.co/videos/4343/4343-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/traffic-in-a-crossroads-4343/",
+          "license": "https://mixkit.co/license/#videoFree"
+        }
+      ]
     },
     {
       "id": "street_cars",
       "file": "car-detection.mp4",
       "url": "https://storage.openvinotoolkit.org/data/test_data/videos/car-detection.mp4",
       "verified": "200 video/mp4 (range GET 206)"
+    },
+    {
+      "id": "government_perimeter",
+      "file": "government-perimeter-montage.mp4",
+      "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/worker-zone-detection.mp4",
+      "verified": "200 video/mp4; local deterministic montage of verified worker-zone and street_cars sources",
+      "source_parts": [
+        {
+          "id": "worker-zone-detection.mp4",
+          "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/worker-zone-detection.mp4"
+        },
+        {
+          "id": "car-detection.mp4",
+          "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/car-detection.mp4"
+        }
+      ]
     },
     {
       "id": "people_queue",
