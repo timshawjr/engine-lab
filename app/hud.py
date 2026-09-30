@@ -554,6 +554,38 @@ class StreamTile(QFrame):
             )
 
 
+def gauge_state(
+    engine: str,
+    scenario_devices: set[str],
+    disabled: bool,
+    value: float | None,
+    age_s: float | None,
+) -> str:
+    """Classify an engine gauge into one of four honest states.
+
+    Precedence, in order: the operator has switched the engine off; this
+    vertical has no stage on the engine; the engine is active (a non-zero
+    measurement no older than ``THEME.telemetry_recent_seconds``); otherwise it
+    is idle.
+
+    ``age_s`` is the number of seconds since the engine last measured a non-zero
+    value; ``None`` means it has never done measurable work. Pure and free of Qt
+    and side effects so it is testable directly.
+    """
+    if disabled:
+        return "OFF BY OPERATOR"
+    if engine not in scenario_devices:
+        return "NOT USED BY THIS VERTICAL"
+    if (
+        value is not None
+        and value > 0.0
+        and age_s is not None
+        and age_s <= THEME.telemetry_recent_seconds
+    ):
+        return "ACTIVE"
+    return "IDLE"
+
+
 class EngineGauge(QWidget):
     def __init__(
         self,
@@ -567,25 +599,60 @@ class EngineGauge(QWidget):
         self.compact = compact
         self.engine_metric: EngineMetric | None = None
         self.disabled = False
+        self.scenario_devices: set[str] = {"NPU", "GPU", "CPU"}
+        self._last_active_at: float | None = None
         self._history: deque[tuple[float, float]] = deque()
         self.setMinimumHeight(115 if compact else 160)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def update_metric(self, metric: EngineMetric) -> None:
+    def update_metric(
+        self,
+        metric: EngineMetric,
+        sampled_at: float | None = None,
+    ) -> None:
         if self.disabled:
             return
         self.engine_metric = metric
         if metric.value_percent is not None:
             self._history.append((time.time(), metric.value_percent))
+            if metric.value_percent > 0.0:
+                self._last_active_at = (
+                    sampled_at if sampled_at is not None else time.time()
+                )
         cutoff = time.time() - THEME.sparkline_window_seconds
         while self._history and self._history[0][0] < cutoff:
             self._history.popleft()
-        self.setToolTip(f"{metric.source}\n{metric.detail}")
+        if self.engine in self.scenario_devices:
+            self.setToolTip(f"{metric.source}\n{metric.detail}")
+        self.update()
+
+    def set_scenario_devices(self, devices: set[str]) -> None:
+        self.scenario_devices = set(devices)
+        if not self.disabled and self.engine not in self.scenario_devices:
+            self.setToolTip(
+                f"{self.engine} has no stage in this vertical — nothing to measure."
+            )
         self.update()
 
     def set_disabled(self, disabled: bool) -> None:
         self.disabled = disabled
         self.update()
+
+    def _state_text(
+        self,
+        state: str,
+        value: float | None,
+        age_s: float | None,
+    ) -> str:
+        if state == "IDLE":
+            if age_s is not None:
+                return f"IDLE · last measured {age_s:.0f}s ago"
+            if self.engine_metric is not None:
+                # No non-zero reading yet: defer to the source's own honest label
+                # ("MEASURED IDLE", "NO COUNTER", "NO SAMPLE").
+                return self.engine_metric.state
+            return "WAITING"
+        return state
 
     def _draw_sparkline(
         self,
@@ -609,8 +676,17 @@ class EngineGauge(QWidget):
     def paintEvent(self, event: Any) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        value = None if self.engine_metric is None else self.engine_metric.value_percent
+        age_s = None if self._last_active_at is None else time.time() - self._last_active_at
+        state = gauge_state(
+            self.engine,
+            self.scenario_devices,
+            self.disabled,
+            value,
+            age_s,
+        )
         normal_accent = {"NPU": THEME.npu, "GPU": THEME.gpu, "CPU": THEME.cpu}[self.engine]
-        accent = THEME.text_muted if self.disabled else normal_accent
+        accent = normal_accent if state == "ACTIVE" else THEME.text_muted
         rect = self.rect().adjusted(1, 1, -1, -1)
         painter.setPen(QPen(QColor(THEME.border), 1))
         painter.setBrush(QColor(THEME.panel_alt))
@@ -636,20 +712,18 @@ class EngineGauge(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             f"{self.engine} · {provider}",
         )
-        state = "OFF BY OPERATOR" if self.disabled else (
-            "WAITING" if self.engine_metric is None else self.engine_metric.state
-        )
+        state_text = self._state_text(state, value, age_s)
         painter.setFont(QFont(THEME.font_family, 14 if self.compact else THEME.font_badge, QFont.Weight.DemiBold))
         painter.drawText(
             QRectF(x + width * 0.35, y, width * 0.65, 28),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-            state,
+            state_text,
         )
-        value = None if self.engine_metric is None else self.engine_metric.value_percent
-        value_text = "—" if value is None else f"{value:.0f}%"
+        not_used = state == "NOT USED BY THIS VERTICAL"
+        value_text = "—" if (value is None or not_used) else f"{value:.0f}%"
         value_font = QFont(THEME.font_family, 40 if self.compact else 56, QFont.Weight.Bold)
         painter.setFont(value_font)
-        painter.setPen(QPen(QColor(THEME.text_muted if self.disabled else THEME.text)))
+        painter.setPen(QPen(QColor(THEME.text_muted if state != "ACTIVE" else THEME.text)))
         value_height = max(56 if self.compact else 72, painter.fontMetrics().height() + 10)
         value_rect = QRectF(
             x,
@@ -668,7 +742,8 @@ class EngineGauge(QWidget):
             width * 0.36,
             60 if self.compact else 70,
         )
-        self._draw_sparkline(painter, spark_rect, accent)
+        if not not_used:
+            self._draw_sparkline(painter, spark_rect, accent)
         bar = QRectF(
             x,
             value_rect.bottom() + 8 if self.compact else y + 124,
@@ -676,7 +751,7 @@ class EngineGauge(QWidget):
             12 if self.compact else THEME.gauge_height,
         )
         painter.fillRect(bar, QColor(THEME.border))
-        if value is not None:
+        if value is not None and not not_used:
             fraction = max(0.0, min(1.0, value / THEME.gauge_max_percent))
             painter.fillRect(
                 QRectF(bar.left(), bar.top(), bar.width() * fraction, bar.height()),
@@ -1260,6 +1335,7 @@ class MainWindow(QMainWindow):
             gauge = EngineGauge(engine, compact=self.compact_layout)
             self.gauges[engine] = gauge
             gauge_layout.addWidget(gauge, 1)
+        self._update_gauge_scenario_devices()
         main_row.addWidget(gauge_panel, 4)
         if self.compact_layout:
             video_panel.setMaximumHeight(430)
@@ -1414,6 +1490,11 @@ class MainWindow(QMainWindow):
         self.fallback_label.setVisible(bool(self.fallbacks))
         if self.fallbacks:
             self.fallback_label.setToolTip("\n".join(sorted(self.fallbacks)))
+
+    def _update_gauge_scenario_devices(self) -> None:
+        devices = {stage.device_pref for stage in self.scenario.stages}
+        for gauge in self.gauges.values():
+            gauge.set_scenario_devices(devices)
 
     def _update_policy_header(self) -> None:
         self.policy_snapshot = self.policy.snapshot()
@@ -1602,6 +1683,7 @@ class MainWindow(QMainWindow):
             return
         self.runtime_sequence += 1
         self.scenario = self.catalog[scenario_id]
+        self._update_gauge_scenario_devices()
         self.video_clock.set_video_path(
             self.catalog.media_path(self.scenario.id, self.camera_index)
         )
@@ -1771,7 +1853,7 @@ class MainWindow(QMainWindow):
         self.latest_telemetry = frame
         self.telemetry_history.append(frame)
         for metric in frame.engine_metrics:
-            self.gauges[metric.engine].update_metric(metric)
+            self.gauges[metric.engine].update_metric(metric, frame.sampled_at)
         self.rss_tile.set_value(
             f"{frame.process_rss_bytes / THEME.bytes_per_mib:.0f} MiB"
         )

@@ -55,6 +55,9 @@ class Theme:
     ticker_seconds: int = 8
     attract_scenario_seconds: int = 12
     stream_rate_window_seconds: float = 2.0
+    # A telemetry sample counts as "recent" for a gauge's ACTIVE state while its
+    # measurement is no older than this many seconds. Ten samples at the 5 Hz
+    # telemetry cadence, so a briefly idle engine is not mistaken for a dead one.
     telemetry_recent_seconds: float = 2.0
     metric_window_seconds: float = 10.0
     sparkline_window_seconds: float = 60.0
