@@ -100,7 +100,8 @@
       "source": "converted",
       "repo": "openai/clip-vit-base-patch32",
       "conversion_tool": "tools/build_clip_zero_shot.py + tools/convert_clip_onnx.py",
-      "conversion_note": "Vision tower only, exported at static 1x3x224x224 and FP16-compressed. The text tower is not shipped: the declared vocabulary in tools/clip_vocabulary.py is fixed configuration, so its embeddings are baked once by the build tool and the app runs no tokenizer and no text encoder at runtime.",      "files": [
+      "conversion_note": "Vision tower only, exported at static 1x3x224x224 and FP16-compressed. The text tower is not shipped: the declared vocabulary in tools/clip_vocabulary.py is fixed configuration, so its embeddings are baked once by the build tool and the app runs no tokenizer and no text encoder at runtime.",
+      "files": [
         "clip-vision.xml",
         "clip-vision.bin",
         "text_embeddings.npy",
@@ -227,63 +228,52 @@
   ],
   "media": [
     {
-      "id": "retail_aisle",
-      "file": "store-aisle-detection.mp4",
-      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/store-aisle-detection.mp4",
-      "verified": "200 video/mp4 (range GET 206)"
+      "id": "retail_checkout",
+      "file": "retail-checkout.mp4",
+      "url": "https://www.pexels.com/download/video/32658425",
+      "verified": "fetched 2026-09-30: 200 video/mp4, 1920x1080, 113s. Frame-checked: overhead self-checkout counter; a Ruffles chip bag is legible through most of the clip and a Mountain Dew bottle appears around 13-18s.",
+      "provenance": "Pexels 32658425 - the same clip Intel's own retail loss-prevention reference downloads (its configs/camera_to_workload.json uses pexels.com/download/video/32658425).",
+      "license": "Pexels License - free for commercial use, no attribution required"
     },
     {
-      "id": "traffic",
-      "file": "smart-city-traffic-montage.mp4",
-      "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
-      "verified": "200 video/mp4 (range GET 206); local 30 FPS action montage of verified Mixkit traffic sources",
-      "source_parts": [
-        {
-          "id": "mixkit-4000-busy-street.mp4",
-          "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
-          "source_page": "https://mixkit.co/free-stock-video/busy-street-in-the-city-4000/",
-          "license": "https://mixkit.co/license/#videoFree"
-        },
-        {
-          "id": "mixkit-4272-traffic-light.mp4",
-          "url": "https://assets.mixkit.co/videos/4272/4272-720.mp4",
-          "source_page": "https://mixkit.co/free-stock-video/traffic-light-directing-traffic-4272/",
-          "license": "https://mixkit.co/license/#videoFree"
-        },
-        {
-          "id": "mixkit-4343-crossroads.mp4",
-          "url": "https://assets.mixkit.co/videos/4343/4343-720.mp4",
-          "source_page": "https://mixkit.co/free-stock-video/traffic-in-a-crossroads-4343/",
-          "license": "https://mixkit.co/license/#videoFree"
-        }
-      ]
+      "id": "smart_city_intersection",
+      "file": "smart-city-intersection.mp4",
+      "url": "https://assets.mixkit.co/videos/1755/1755-720.mp4",
+      "verified": "fetched 2026-09-30: 200 video/mp4, 1280x720, 20s. Frame-checked: top-down view of a multi-lane intersection with cars moving through it - matches the crossroad detector's training framing.",
+      "license": "Mixkit Free License - commercial use, no attribution"
+    },
+    {
+      "id": "medical_eldercare",
+      "file": "medical-eldercare.mp4",
+      "url": "https://assets.mixkit.co/videos/5559/5559-720.mp4",
+      "verified": "fetched 2026-09-30: 200 video/mp4, 1280x720, 20s. Frame-checked: indoor care scene, a caregiver helps an elderly person stand up and walk. A full body is in frame, which is what the pose stage needs. NOTE: this clip shows assisted standing, not a fall, so posture_alert stays armed without firing.",
+      "license": "Mixkit Free License"
+    },
+    {
+      "id": "gov_vehicle_entry",
+      "file": "gov-vehicle-entry.mp4",
+      "url": "https://assets.mixkit.co/videos/35890/35890-720.mp4",
+      "verified": "fetched 2026-09-30: 200 video/mp4, 1280x720, 14s. Frame-checked: ground-level vehicle entry point (barrier/parking entrance) with cars and people. Plate legibility was NOT verified, so the scenario copy no longer promises plate reads.",
+      "license": "Mixkit Free License"
+    },
+    {
+      "id": "store_aisle_alt",
+      "file": "store-aisle-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/store-aisle-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206). Alternate: an aisle of people walking, few packaged goods to name.",
+      "license": "Open Model Zoo sample media"
+    },
+    {
+      "id": "queue_alt",
+      "file": "one-by-one-person-detection.mp4",
+      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/one-by-one-person-detection.mp4",
+      "verified": "200 video/mp4 (range GET 206). Alternate: a single-file walking queue.",
+      "license": "Open Model Zoo sample media"
     },
     {
       "id": "street_cars",
       "file": "car-detection.mp4",
       "url": "https://storage.openvinotoolkit.org/data/test_data/videos/car-detection.mp4",
-      "verified": "200 video/mp4 (range GET 206)"
-    },
-    {
-      "id": "government_perimeter",
-      "file": "government-perimeter-montage.mp4",
-      "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/worker-zone-detection.mp4",
-      "verified": "200 video/mp4; local deterministic montage of verified worker-zone and street_cars sources",
-      "source_parts": [
-        {
-          "id": "worker-zone-detection.mp4",
-          "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/worker-zone-detection.mp4"
-        },
-        {
-          "id": "car-detection.mp4",
-          "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/car-detection.mp4"
-        }
-      ]
-    },
-    {
-      "id": "people_queue",
-      "file": "one-by-one-person-detection.mp4",
-      "url": "https://storage.openvinotoolkit.org/data/test_data/videos/one-by-one-person-detection.mp4",
       "verified": "200 video/mp4 (range GET 206)"
     },
     {

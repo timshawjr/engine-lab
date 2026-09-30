@@ -54,6 +54,7 @@ from app.engine.pipelines import (
 from app.engine.runner import RetailVideoClock, RunnerInfo
 from app.engine.stages import Detection, Keypoint
 from app.overlay import source_to_display_rect
+from app import hangwatch
 from app.telemetry.devices_win import (
     enumerate_compute_accelerators,
     enumerate_display_adapters,
@@ -1629,6 +1630,9 @@ class MainWindow(QMainWindow):
         self.ticker_label.setText(self.scenario.ticker[self.ticker_index])
 
     def _update_clock(self) -> None:
+        # This timer is the UI thread's heartbeat for the hang watchdog: if it stops firing, the
+        # event loop is blocked and hangwatch dumps every thread's stack into the session log.
+        hangwatch.mark_ui_tick()
         self.clock_label.setText(datetime.now().strftime("%H:%M:%S"))
 
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:
