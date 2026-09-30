@@ -403,7 +403,11 @@ def _model_and_compile_checks(report: Preflight, config: dict[str, Any], core: o
                 model_id,
                 "FAIL",
                 f"missing/empty: {', '.join(missing)}",
-                "Run .venv\\Scripts\\python.exe tools\\download_models.py",
+                (
+                    f"Build locally: {model.get('conversion_tool', 'see config/models.json')}"
+                    if model.get("source") == "converted"
+                    else "Run .venv\\Scripts\\python.exe tools\\download_models.py"
+                ),
             )
             continue
         report.add(

@@ -183,7 +183,10 @@ def _pdh_api() -> object:
 def _split_double_nul(buffer: ctypes.Array, char_count: int) -> list[str]:
     if char_count <= 0:
         return []
-    raw = ctypes.string_at(buffer, char_count)
+    # PDH reports sizes in TCHARs, but ``string_at`` takes a byte count: on Windows a wchar is
+    # two bytes, so reading ``char_count`` bytes parses only half of the double-NUL list and
+    # silently truncates every enumerated instance name.
+    raw = ctypes.string_at(buffer, char_count * ctypes.sizeof(ctypes.c_wchar))
     text = raw.decode("utf-16-le", errors="replace")
     values = [value for value in text.split("\x00") if value]
     return values

@@ -202,6 +202,20 @@ def _get_instance_id(setupapi: object, device_info_set: int, info: SP_DEVINFO_DA
     return buffer.value
 
 
+def _decode_utf16_registry_string(raw: bytes, size: int) -> str:
+    """Decode a UTF-16LE registry string from a buffer the API filled with ``size`` bytes.
+
+    ``bytes.value`` stops at the first NUL *byte*, which in UTF-16LE is half of the first
+    character, so decoding it yields a one-character name. The device-name heuristics then fail
+    and the NPU is dropped from classification - a blank NPU gauge while Task Manager shows the
+    NPU busy. Decode the whole buffer instead.
+    """
+
+    if size <= 0:
+        return ""
+    return raw[:size].decode("utf-16-le", errors="replace").rstrip("\x00")
+
+
 def _get_registry_string(
     setupapi: object,
     device_info_set: int,
@@ -233,7 +247,7 @@ def _get_registry_string(
         None,
     ):
         return ""
-    return buffer.value.decode("utf-16-le", errors="replace").rstrip("\x00")
+    return _decode_utf16_registry_string(buffer.raw, required.value)
 
 
 def _get_property(

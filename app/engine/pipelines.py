@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import time
 import traceback
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -46,6 +47,8 @@ from app.engine.stages import (
 from app.scenarios.medical import confident_pose_angle
 from app.scenarios.retail import classification_allowed, classification_candidates
 from app.telemetry.npu_fallback import NpuDutyCycle
+
+LOGGER = logging.getLogger("engine_lab")
 
 
 LOGICAL_STAGES = {"zone_event", "posture_event", "track_event"}
@@ -553,6 +556,10 @@ class ScenarioStreamWorker(QThread):
         self._event_tracker = self._event_trackers[scenario.id]
         self._latest_placements: dict[str, RunnerInfo] = {}
         self._fallbacks: list[str] = []
+        # stage -> device string that failed to compile for that stage. Used so a known-failing
+        # device is not retried on every frame, while a policy change to a different device
+        # string clears the match and retries.
+        self._cpu_fallback_devices: dict[str, str] = {}
         # Baked CLIP text embeddings are configuration, not per-frame work, so
         # they are loaded once per worker and reused for every frame.
         self._zero_shot_cache: dict[
@@ -623,6 +630,48 @@ class ScenarioStreamWorker(QThread):
             compile_config=assignment.compile_config,
         )
 
+    def _create_runner_or_cpu_fallback(
+        self,
+        assignment: StageAssignment,
+    ) -> OpenVINOSingleRunner:
+        """Compile the assigned device, degrading the stage to CPU instead of killing the stream.
+
+        The startup availability gate is a cached probe, so a compile or placement failure can
+        still happen later: a driver update can invalidate the NPU blob cache, an NPU compile can
+        fail transiently, or an AUTO placement can land outside the priority list. The spec
+        requires that case to keep the tile live with a labelled
+        ``ran on CPU (<device> compile failed)`` badge (5.2/5.5), not to end the stream. If the
+        CPU fallback also fails the stage genuinely cannot run, so the exception propagates to the
+        stream's failure path.
+        """
+
+        try:
+            return self._create_runner(assignment)
+        except Exception as exc:
+            if assignment.requested_device == "CPU":
+                raise
+            LOGGER.error(
+                "stream %s stage %s failed to compile on %s (%s: %s); falling back to CPU",
+                self.stream_index,
+                assignment.stage,
+                assignment.requested_device,
+                type(exc).__name__,
+                exc,
+            )
+            fallback = replace(
+                assignment,
+                requested_device="CPU",
+                compile_config=RunnerCompileConfig(performance_hint="THROUGHPUT"),
+            )
+            runner = self._create_runner(fallback)
+            self._cpu_fallback_devices[assignment.stage] = assignment.requested_device
+            message = (
+                f"{assignment.stage} ran on CPU ({assignment.requested_device} compile failed)"
+            )
+            if message not in self._fallbacks:
+                self._fallbacks.append(message)
+            return runner
+
     def _record_placement(
         self,
         assignment: StageAssignment,
@@ -637,6 +686,7 @@ class ScenarioStreamWorker(QThread):
             assignment.intended_device in {"NPU", "GPU"}
             and not assignment.requested_device.startswith("AUTO:")
             and assignment.intended_device not in roots
+            and self._cpu_fallback_devices.get(assignment.stage) != assignment.requested_device
         ):
             message = (
                 f"{assignment.stage} ran on {','.join(runner.info.execution_devices)} "
@@ -961,13 +1011,27 @@ class ScenarioStreamWorker(QThread):
                 continue
             key = (scenario.id, assignment.stage)
             runner = runner_cache.get(key)
-            if (
+            needs_compile = (
                 runner is None
                 or runner.device != assignment.requested_device
                 or runner.compile_config != assignment.compile_config
+            )
+            if (
+                needs_compile
+                and runner is not None
+                and self._cpu_fallback_devices.get(assignment.stage) == assignment.requested_device
             ):
-                runner = self._create_runner(assignment)
+                # This stage already degraded to CPU on this exact device string; retrying it
+                # every frame would spam the log and stall the tile. A policy change to a
+                # different device clears the match and is retried.
+                needs_compile = False
+            if needs_compile:
+                runner = self._create_runner_or_cpu_fallback(assignment)
                 runner_cache[key] = runner
+            if runner is None:  # unreachable: needs_compile is True whenever the cache misses
+                raise RuntimeError(
+                    f"stream {self.stream_index} stage {assignment.stage} has no runner"
+                )
             active_runners[assignment.stage] = runner
             placements[assignment.stage] = runner.info
             self._record_placement(assignment, runner)

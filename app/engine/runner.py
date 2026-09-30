@@ -181,6 +181,11 @@ class OpenVINOSingleRunner:
         self._execution_roots = {
             value.upper().split(".", 1)[0] for value in self.info.execution_devices
         }
+        # The app-measured NPU duty cycle may only count work that was actually bound to the
+        # NPU. An AUTO-compiled model reports its whole priority list in EXECUTION_DEVICES, so
+        # testing membership of that set would credit CPU/GPU inferences to the NPU gauge - a
+        # number that was never measured (SPEC 6.3).
+        self._npu_bound = self.device.strip().upper() == "NPU"
 
     def _compile(self) -> RunnerInfo:
         compiled, info = self.compiled_store.get(self.device, self.compile_config)
@@ -231,7 +236,7 @@ class OpenVINOSingleRunner:
             raise RuntimeError("OpenVINO inference callback failed") from self._callback_error
         if not self._callback_outputs:
             raise RuntimeError("OpenVINO inference completed without an output tensor")
-        if "NPU" in self._execution_roots:
+        if self._npu_bound:
             self.npu_duty_cycle.record_inference(duration_seconds, ended_at=time.monotonic())
         return self._callback_outputs, duration_seconds * 1000.0
 

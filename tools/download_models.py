@@ -284,6 +284,19 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
         model_dir.mkdir(parents=True, exist_ok=True)
         print(f"MODEL {model_id}")
         entry: dict[str, Any] = {"files": {}}
+        if model.get("source") == "converted":
+            # Some models are built locally rather than downloaded (the CLIP vision tower is
+            # exported and FP16-compressed on a dev machine). That is not a download failure, so
+            # it must not fail Phase 0 - but it has to say exactly what to run instead.
+            entry["status"] = "requires_local_build"
+            entry["files_expected"] = list(model.get("files", ()))
+            entry["instruction"] = (
+                "Build locally before preflight: "
+                f"{model.get('conversion_tool', 'see config/models.json')}"
+            )
+            manifest["models"][model_id] = entry
+            print(f"  SKIP: source 'converted' - build locally: {model.get('conversion_tool')}")
+            continue
         try:
             for kind, url in _model_files(model):
                 filename = _target_name(model, kind, url)
