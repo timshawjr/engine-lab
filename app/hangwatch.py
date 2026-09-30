@@ -29,6 +29,9 @@ _lock = threading.Lock()
 _stop = threading.Event()
 _last_tick = time.monotonic()
 _thread: threading.Thread | None = None
+# The session-log stream, retained so the C-level timer can be re-armed from the UI
+# heartbeat without threading the handle through every caller.
+_stream: IO[str] | None = None
 
 
 def mark_ui_tick() -> None:
@@ -63,11 +66,12 @@ def arm(
     watchdog thread, or ``None`` when the stream cannot be used for faulthandler output.
     """
 
-    global _thread
+    global _thread, _stream
     if stream is None or not hasattr(stream, "fileno"):
         LOGGER.warning("hangwatch: session log stream is not usable; stall dumps are disabled")
         return None
 
+    _stream = stream
     target = cast(Any, stream)
     try:
         faulthandler.enable(file=target, all_threads=True)
@@ -101,3 +105,28 @@ def arm(
     _thread = threading.Thread(target=_watch, name="engine-lab-hangwatch", daemon=True)
     _thread.start()
     return _thread
+
+
+def arm_dump_later(stall_seconds: float = DEFAULT_STALL_SECONDS) -> None:
+    """Arm a C-level timer that dumps every thread's stack if the UI stops ticking.
+
+    The watchdog thread above cannot observe the hang that actually happens. When the
+    main thread blocks inside a C call that holds the GIL - an OpenVINO or driver call,
+    for example - no other Python thread is scheduled, so the watchdog never reaches its
+    own poll and never dumps. Six hangs across two sessions produced zero stacks for
+    exactly this reason.
+
+    ``faulthandler.dump_traceback_later`` is implemented in C and does not depend on
+    another Python thread being scheduled, so it still fires. Calling it again cancels
+    and restarts the timer, so re-arming it from the UI heartbeat gives "dump if the
+    heartbeat has been silent for ``stall_seconds``" with no log spam on a healthy run.
+    """
+
+    if _stream is None:
+        return
+    try:
+        faulthandler.dump_traceback_later(
+            stall_seconds, file=cast(Any, _stream), repeat=False
+        )
+    except (ValueError, OSError) as exc:  # pragma: no cover - depends on the stream type
+        LOGGER.warning("hangwatch: dump_traceback_later could not be armed: %s", exc)

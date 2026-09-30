@@ -27,7 +27,6 @@ from app.engine.stages import (
 )
 from app.telemetry.npu_fallback import NpuDutyCycle
 
-
 @dataclass(frozen=True)
 class RunnerCompileConfig:
     performance_hint: str = "LATENCY"
@@ -68,6 +67,12 @@ class CompiledModelStore:
         self._model_width = self._input_spec.width
         self._model_input_shape = self._input_spec.shape
         self._lock = threading.Lock()
+        # Concurrent infer() calls on one CompiledModel deadlock inside OpenVINO's
+        # data_dispatcher, which is shared per compiled model rather than per request. The
+        # captured hang showed several streams blocked in data_dispatcher._data_dispatch at
+        # once. Serialising per store keeps streams on different devices independent while
+        # making same-device streams safe.
+        self._infer_lock = threading.Lock()
         self._entries: dict[tuple[str, RunnerCompileConfig], tuple[Any, RunnerInfo]] = {}
 
     @staticmethod
@@ -171,11 +176,6 @@ class OpenVINOSingleRunner:
         self.compile_config = compile_config or RunnerCompileConfig()
         self.device = self.compiled_store._normalize_device(device)
         self.input_spec = self.compiled_store._input_spec
-        self._callback_output: np.ndarray | None = None
-        self._callback_outputs: tuple[np.ndarray, ...] = ()
-        self._callback_finished_at: float | None = None
-        self._callback_error: BaseException | None = None
-        self._sequence = 0
         self.info = self._compile()
         self.device = self.info.requested_device
         self._execution_roots = {
@@ -191,27 +191,20 @@ class OpenVINOSingleRunner:
         compiled, info = self.compiled_store.get(self.device, self.compile_config)
         self._compiled = compiled
         self._output_count = len(compiled.outputs)
-        self._queue = ov.AsyncInferQueue(compiled)
-        self._queue.set_callback(self._callback)
+        # A synchronous InferRequest, not an AsyncInferQueue.
+        #
+        # AsyncInferQueue routes every call through OpenVINO's *Python* data_dispatcher
+        # wrapper, which holds the GIL while it works. With several streams calling it at
+        # once the GIL is contended hard enough that a sibling thread cannot run a plain
+        # numpy call: the captured hang showed three workers blocked inside
+        # data_dispatcher._data_dispatch and a fourth starved in np.ascontiguousarray.
+        # Windows then kills the process as an Application Hang. A synchronous InferRequest
+        # is a direct C call that releases the GIL while it runs, so the threads cannot
+        # deadlock against each other.
+        self._infer_request = compiled.create_infer_request()
         self._model_height = self.input_spec.height
         self._model_width = self.input_spec.width
         return info
-
-    def _callback(self, request: Any, userdata: int) -> None:
-        try:
-            outputs = tuple(
-                np.array(request.get_output_tensor(index).data, copy=True)
-                for index in range(self._output_count)
-            )
-            self._callback_outputs = outputs
-            self._callback_output = outputs[0] if outputs else None
-            self._callback_finished_at = time.perf_counter()
-            self._callback_error = None
-        except BaseException as exc:
-            self._callback_outputs = ()
-            self._callback_output = None
-            self._callback_finished_at = time.perf_counter()
-            self._callback_error = exc
 
     def infer_all(
         self,
@@ -222,23 +215,24 @@ class OpenVINOSingleRunner:
             raise ValueError(f"input must be float32 {expected}, got {tensor.shape} {tensor.dtype}")
         if not tensor.flags.c_contiguous:
             tensor = np.ascontiguousarray(tensor)
-        self._callback_output = None
-        self._callback_outputs = ()
-        self._callback_finished_at = None
-        self._callback_error = None
-        self._sequence += 1
         started = time.perf_counter()
-        self._queue.start_async(tensor, self._sequence)
-        self._queue.wait_all()
-        finished = self._callback_finished_at or time.perf_counter()
+        # Serialise inference per compiled model. OpenVINO's data_dispatcher is shared by
+        # every request created from one CompiledModel, and concurrent infer() calls on it
+        # deadlock - the captured hang had several streams inside data_dispatcher._data_dispatch
+        # simultaneously. Streams on different devices use different stores and stay parallel.
+        with self.compiled_store._infer_lock:
+            self._infer_request.infer({0: tensor})
+            outputs = tuple(
+                np.array(self._infer_request.get_output_tensor(index).data, copy=True)
+                for index in range(self._output_count)
+            )
+        finished = time.perf_counter()
         duration_seconds = max(0.0, finished - started)
-        if self._callback_error is not None:
-            raise RuntimeError("OpenVINO inference callback failed") from self._callback_error
-        if not self._callback_outputs:
+        if not outputs:
             raise RuntimeError("OpenVINO inference completed without an output tensor")
         if self._npu_bound:
             self.npu_duty_cycle.record_inference(duration_seconds, ended_at=time.monotonic())
-        return self._callback_outputs, duration_seconds * 1000.0
+        return outputs, duration_seconds * 1000.0
 
     def infer(self, tensor: np.ndarray) -> tuple[np.ndarray, float]:
         outputs, duration_ms = self.infer_all(tensor)

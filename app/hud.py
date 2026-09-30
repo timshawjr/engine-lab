@@ -1633,6 +1633,10 @@ class MainWindow(QMainWindow):
         # This timer is the UI thread's heartbeat for the hang watchdog: if it stops firing, the
         # event loop is blocked and hangwatch dumps every thread's stack into the session log.
         hangwatch.mark_ui_tick()
+        # Re-arm the C-level timer on every tick. A Python watchdog thread cannot run while the
+        # main thread is blocked in a C call that holds the GIL, which is the case that actually
+        # hangs; this timer is C-level and still fires, so the stack is captured either way.
+        hangwatch.arm_dump_later()
         self.clock_label.setText(datetime.now().strftime("%H:%M:%S"))
 
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:

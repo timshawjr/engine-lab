@@ -57,7 +57,10 @@ class HangWatchTests(unittest.TestCase):
 
     def test_stall_is_measured_from_the_last_tick(self) -> None:
         hangwatch.mark_ui_tick()
-        time.sleep(0.05)
+        # Sleep well past the assertion threshold. Windows timer resolution means
+        # time.sleep(0.05) can return after ~0.047s, so asserting >= 0.05 against a
+        # 0.05s sleep is a coin flip that failed 5 runs in 6.
+        time.sleep(0.15)
 
         self.assertGreaterEqual(hangwatch.ui_stall_seconds(), 0.05)
 
