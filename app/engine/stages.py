@@ -596,15 +596,34 @@ def postprocess_zero_shot(
     return tuple(per_label[: max(1, top_k)])
 
 
-def load_zero_shot_vocabulary(path: Path) -> tuple[np.ndarray, tuple[str, ...], tuple[int, ...]]:
-    """Load the baked text embeddings and their label/template layout."""
+def load_zero_shot_vocabulary(
+    path: Path,
+    name: str | None = None,
+) -> tuple[np.ndarray, tuple[str, ...], tuple[int, ...]]:
+    """Load the baked text embeddings and their label/template layout.
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    embeddings = np.load(path.with_name("text_embeddings.npy")).astype(np.float32)
+    ``name`` selects the per-scenario pair baked by
+    ``tools/build_clip_zero_shot.py --scenario <name>``:
+    ``vocabulary_<name>.json`` plus ``text_embeddings_<name>.npy`` beside the
+    default pair. A ``name`` of None, or a name whose pair is not fully
+    present, falls back to the default pair, so a missing per-scenario
+    vocabulary degrades instead of raising at startup.
+    """
+
+    payload_path = path
+    embeddings_path = path.with_name("text_embeddings.npy")
+    if name is not None:
+        named_payload = path.with_name(f"vocabulary_{name}.json")
+        named_embeddings = path.with_name(f"text_embeddings_{name}.npy")
+        if named_payload.is_file() and named_embeddings.is_file():
+            payload_path = named_payload
+            embeddings_path = named_embeddings
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    embeddings = np.load(embeddings_path).astype(np.float32)
     labels = tuple(str(value) for value in payload["labels"])
     counts = tuple(int(value) for value in payload["template_counts"])
     if not labels or not counts:
-        raise ValueError(f"empty zero-shot vocabulary in {path}")
+        raise ValueError(f"empty zero-shot vocabulary in {payload_path}")
     if embeddings.shape[0] != sum(counts):
         raise ValueError(
             f"{embeddings.shape[0]} embeddings do not cover {sum(counts)} prompts"

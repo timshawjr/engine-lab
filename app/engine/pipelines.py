@@ -91,6 +91,7 @@ class StageSpec:
     stage: str
     model_id: str
     device_pref: str
+    vocabulary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,7 @@ def load_scenario_catalog(
                         stage=stage["stage"],
                         model_id=stage["model_id"],
                         device_pref=stage["device_pref"],
+                        vocabulary=stage.get("vocabulary"),
                     )
                     for stage in item["stages"]
                 ),
@@ -561,9 +563,11 @@ class ScenarioStreamWorker(QThread):
         # string clears the match and retries.
         self._cpu_fallback_devices: dict[str, str] = {}
         # Baked CLIP text embeddings are configuration, not per-frame work, so
-        # they are loaded once per worker and reused for every frame.
+        # they are loaded once per worker and reused for every frame. Keyed by
+        # (model, vocabulary) because two scenarios can share one CLIP model
+        # with different vocabularies.
         self._zero_shot_cache: dict[
-            str,
+            tuple[str, str | None],
             tuple[np.ndarray, tuple[str, ...], tuple[int, ...]],
         ] = {}
 
@@ -839,10 +843,11 @@ class ScenarioStreamWorker(QThread):
     ) -> tuple[tuple[Detection, ...], StageMetric]:
         """Name each candidate crop with CLIP against a declared vocabulary.
 
-        Unlike the ImageNet classifier, the output set is bounded by
-        ``vocabulary.json``, which is generated from
+        Unlike the ImageNet classifier, the output set is bounded by the
+        stage's baked ``vocabulary_<name>.json``, which is generated from
         ``tools/clip_vocabulary.py``. CLIP can only return one of the words the
-        operator declared, so the overlay cannot invent a label.
+        operator declared for this scenario, so the overlay cannot invent a
+        label.
         """
 
         bundle = self.registry.bundle(assignment.model_id)
@@ -860,8 +865,16 @@ class ScenarioStreamWorker(QThread):
         if not candidates:
             return detections, _idle_stage_metric(assignment, runner, 0, 0)
 
+        vocabulary_name = next(
+            (
+                stage.vocabulary
+                for stage in self.scenario.stages
+                if stage.stage == assignment.stage
+            ),
+            None,
+        )
         embeddings, labels, template_counts = self._zero_shot_vocabulary(
-            assignment.model_id, bundle
+            assignment.model_id, bundle, name=vocabulary_name
         )
         classified = list(detections)
         classified_by_id = {id(item): index for index, item in enumerate(classified)}
@@ -907,14 +920,20 @@ class ScenarioStreamWorker(QThread):
         self,
         model_id: str,
         bundle: ModelBundle,
+        name: str | None = None,
     ) -> tuple[np.ndarray, tuple[str, ...], tuple[int, ...]]:
-        """Load and memoise the baked CLIP text embeddings for a model."""
+        """Load and memoise the baked CLIP text embeddings for a vocabulary.
 
-        cached = self._zero_shot_cache.get(model_id)
+        ``name`` is the stage's declared vocabulary; a missing named pair
+        falls back to the default one inside :func:`load_zero_shot_vocabulary`,
+        so a partially built model directory cannot fail the stream here.
+        """
+
+        cached = self._zero_shot_cache.get((model_id, name))
         if cached is None:
             vocabulary_path = bundle.model_path.parent / "vocabulary.json"
-            cached = load_zero_shot_vocabulary(vocabulary_path)
-            self._zero_shot_cache[model_id] = cached
+            cached = load_zero_shot_vocabulary(vocabulary_path, name=name)
+            self._zero_shot_cache[(model_id, name)] = cached
         return cached
 
     def _run_pose(

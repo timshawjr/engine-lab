@@ -16,7 +16,8 @@
         {
           "stage": "product_classifier",
           "model_id": "clip-vision-patch32",
-          "device_pref": "GPU"
+          "device_pref": "GPU",
+          "vocabulary": "retail"
         },
         {
           "stage": "zone_event",
@@ -115,7 +116,8 @@
         {
           "stage": "product_classifier",
           "model_id": "clip-vision-patch32",
-          "device_pref": "GPU"
+          "device_pref": "GPU",
+          "vocabulary": "smart_city"
         },
         {
           "stage": "zone_event",
