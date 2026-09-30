@@ -53,6 +53,7 @@ from app.engine.pipelines import (
 )
 from app.engine.runner import RetailVideoClock, RunnerInfo
 from app.engine.stages import Detection, Keypoint
+from app.layout import use_compact_layout
 from app.overlay import source_to_display_rect
 from app import hangwatch
 from app.telemetry.devices_win import (
@@ -1082,8 +1083,9 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         screen = QApplication.primaryScreen()
-        available_height = screen.availableGeometry().height() if screen is not None else 1080
-        self.compact_layout = available_height < 1600
+        available_width = screen.availableGeometry().width() if screen is not None else THEME.design_width
+        available_height = screen.availableGeometry().height() if screen is not None else THEME.design_height
+        self.compact_layout = use_compact_layout(available_width, available_height)
         self.demo_page = QWidget()
         self.attract_page = QWidget()
         self.stack.addWidget(self.demo_page)
