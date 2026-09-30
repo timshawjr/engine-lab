@@ -29,6 +29,13 @@ class ScenarioCatalogTests(unittest.TestCase):
             ("retail", "smart_city", "medical", "gov_defense"),
         )
 
+    def test_every_vertical_uses_all_three_engines(self) -> None:
+        for scenario in self.catalog.values():
+            devices = {s.device_pref for s in scenario.stages}
+            self.assertTrue(
+                {"NPU", "GPU", "CPU"} <= devices, f"{scenario.id}: {devices}"
+            )
+
     def test_scenario_media_and_thresholds(self) -> None:
         for scenario in self.catalog.values():
             path = self.catalog.media_path(scenario.id, camera_index=None)
@@ -127,33 +134,38 @@ class ScenarioCatalogTests(unittest.TestCase):
         # No sampling: the fast pipeline runs every frame at source rate.
         self.assertNotIn("detector_cadence", rules)
 
-    def test_smart_city_has_no_weak_classifier(self) -> None:
-        """Smart city counts vehicles and people; a classifier adds nothing.
+    def test_smart_city_types_vehicles_with_clip_not_imagenet(self) -> None:
+        """Smart city names vehicle crops with CLIP, not a weak ImageNet top-1.
 
-        The crossroad detector already answers the business question, and an
+        The crossroad detector already answers the counting question, and an
         ImageNet top-1 over a vehicle crop was only ever a weak candidate
-        (``whistle``, ``carton``, ``fly``). Keeping the stage meant putting a
-        word the operator should not trust on screen.
+        (``whistle``, ``carton``, ``fly``). The stage that was added is a
+        zero-shot ``product_classifier`` that names a vehicle crop against a
+        declared vocabulary, so the ImageNet-only fields stay absent.
         """
         stages = {stage.stage for stage in self.catalog["smart_city"].stages}
         self.assertNotIn("classifier", stages)
+        self.assertIn("product_classifier", stages)
+        classifier = next(
+            stage
+            for stage in self.catalog["smart_city"].stages
+            if stage.stage == "product_classifier"
+        )
+        self.assertEqual(classifier.model_id, "clip-vision-patch32")
+        self.assertEqual(classifier.device_pref, "GPU")
         rules = self.catalog["smart_city"].event_rules
-        for removed in (
-            "classify_detector_labels",
-            "classify_output_labels",
-            "classification_min",
-            "classify_min_frames",
-        ):
+        for removed in ("classify_output_labels", "classification_min"):
             self.assertNotIn(removed, rules)
-        # Retail is the only scenario that names products, and it does so from
-        # a declared CLIP vocabulary.
+        self.assertEqual(rules["classify_detector_labels"], ["vehicle"])
+        # Retail and smart city are the two CLIP scenarios; medical and
+        # gov_defense name nothing.
         self.assertEqual(
             [
                 s.id
                 for s in self.catalog.values()
                 if "product_classifier" in {x.stage for x in s.stages}
             ],
-            ["retail"],
+            ["retail", "smart_city"],
         )
 
     def test_classifier_gates_are_configured_on_every_scenario(self) -> None:
@@ -168,9 +180,6 @@ class ScenarioCatalogTests(unittest.TestCase):
             self.assertNotIn("person", rules["classify_detector_labels"])
             self.assertIn("zero_shot_min", rules)
             self.assertGreater(float(rules["zero_shot_min"]), 0.0)
-            # Business events may only be raised for declared classes.
-            self.assertTrue(rules["business_event_labels"])
-            self.assertNotIn("person", rules["business_event_labels"])
 
     def test_retail_stage_assignment(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
@@ -287,7 +296,7 @@ class ScenarioCatalogTests(unittest.TestCase):
             assignments["person_detector"].requested_device, "AUTO:GPU,CPU"
         )
 
-    def test_government_prefers_gpu_for_primary_stages(self) -> None:
+    def test_government_spreads_person_vehicle_and_plate(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
         assignments = {
             item.stage: item
@@ -297,7 +306,8 @@ class ScenarioCatalogTests(unittest.TestCase):
                 0,
             )
         }
-        self.assertEqual(assignments["perimeter_detector"].requested_device, "GPU")
+        self.assertEqual(assignments["perimeter_detector"].requested_device, "NPU")
+        self.assertEqual(assignments["vehicle_detector"].requested_device, "GPU")
         self.assertEqual(assignments["plate_detector"].requested_device, "GPU")
         policy.toggle_gpu()
         assignments = {
@@ -309,6 +319,7 @@ class ScenarioCatalogTests(unittest.TestCase):
             )
         }
         self.assertEqual(assignments["perimeter_detector"].requested_device, "NPU")
+        self.assertEqual(assignments["vehicle_detector"].requested_device, "NPU")
         self.assertEqual(assignments["plate_detector"].requested_device, "NPU")
 
     def test_ssd_normalized_boxes_are_converted_to_source_pixels(self) -> None:

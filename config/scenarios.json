@@ -113,6 +113,11 @@
           "device_pref": "NPU"
         },
         {
+          "stage": "product_classifier",
+          "model_id": "clip-vision-patch32",
+          "device_pref": "GPU"
+        },
+        {
           "stage": "zone_event",
           "model_id": "person-vehicle-bike-detection-crossroad-1016",
           "device_pref": "CPU"
@@ -161,7 +166,12 @@
         "max_track_misses": 12,
         "count_dwell_s": 0.4,
         "track_persist_s": 1.0,
-        "event_cooldown_s": 1.0
+        "event_cooldown_s": 1.0,
+        "classify_detector_labels": [
+          "vehicle"
+        ],
+        "zero_shot_min": 0.22,
+        "classify_min_frames": 3
       },
       "ticker": [
         "Detect vehicles, bicycles, and people",
@@ -248,6 +258,11 @@
         {
           "stage": "perimeter_detector",
           "model_id": "person-detection-retail-0013",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "vehicle_detector",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
           "device_pref": "GPU"
         },
         {
