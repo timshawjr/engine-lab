@@ -502,6 +502,7 @@ class StreamTile(QFrame):
         source_size: tuple[int, int],
         placements: dict[str, RunnerInfo],
         model_ids: dict[str, str],
+        task_labels: dict[str, str],
         metrics: PipelineFrameMetrics | None,
         event_text: str,
     ) -> None:
@@ -539,6 +540,7 @@ class StreamTile(QFrame):
             _stream_activity_text(
                 placements,
                 model_ids,
+                task_labels,
                 len(detections),
             )
         )
@@ -726,24 +728,39 @@ def _short_model_name(model_id: str, stage: str = "") -> str:
     return model_id.replace("-fp16", "").replace("-int8", "")
 
 
+def _stage_label(
+    model_id: str,
+    stage: str,
+    task_labels: dict[str, str],
+    device: str,
+) -> str:
+    """``model — task → device`` for a model-backed stage.
+
+    Logical stages (``model_id == "cpu"``) carry no task label, so they fall
+    back to the bare ``model → device`` form the pipeline bar already used.
+    """
+    task = task_labels.get(model_id, "")
+    if task:
+        return f"{_short_model_name(model_id, stage)} — {task} → {device}"
+    return f"{_short_model_name(model_id, stage)} → {device}"
+
+
 def _stream_activity_text(
     placements: dict[str, RunnerInfo],
     model_ids: dict[str, str],
+    task_labels: dict[str, str],
     detection_count: int,
 ) -> str:
     if not placements:
         return "waiting for pipeline…"
-    verbs = {
-        "detector": "detect",
-        "classifier": "classify",
-        "person_detector": "detect",
-        "pose": "estimate",
-        "perimeter_detector": "detect",
-        "plate_detector": "detect",
-    }
     parts = [
-        f"{_short_model_name(model_ids.get(stage, stage))}: {verbs.get(stage, 'process')}"
-        for stage in placements
+        _stage_label(
+            model_ids.get(stage, stage),
+            stage,
+            task_labels,
+            ",".join(info.execution_devices) or "pending",
+        )
+        for stage, info in placements.items()
     ]
     parts.append("CPU: event logic")
     parts.append(f"{detection_count} detections")
@@ -756,9 +773,11 @@ class StageBreakdown(QFrame):
         parent: QWidget | None = None,
         *,
         compact: bool = False,
+        task_labels: dict[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.compact = compact
+        self._task_labels = task_labels or {}
         self._metrics: tuple[StageMetric, ...] = ()
         self.setMinimumHeight(60 if compact else 70)
         self.setStyleSheet(
@@ -816,7 +835,12 @@ class StageBreakdown(QFrame):
                 painter.fillRect(segment, QColor(colors[index % len(colors)]))
                 if width >= 60:
                     device = metric.execution_devices[0] if metric.execution_devices else "pending"
-                    label = f"{_short_model_name(metric.model_id, metric.stage)} → {device}"
+                    label = _stage_label(
+                        metric.model_id,
+                        metric.stage,
+                        self._task_labels,
+                        device,
+                    )
                     painter.setFont(
                         QFont(
                             THEME.font_family,
@@ -979,6 +1003,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.catalog = catalog
         self.registry = registry
+        self.task_labels = {
+            model_id: str(entry.get("task_label") or "")
+            for model_id, entry in registry.model_entries.items()
+        }
         self.scenario = catalog[initial_scenario]
         self.camera_index = camera_index
         self.cache_dir = cache_dir
@@ -1256,7 +1284,10 @@ class MainWindow(QMainWindow):
             THEME.spacing_sm,
         )
         tile_layout.addWidget(_label("LIVE STREAM TILES", bold=True))
-        self.stage_breakdown = StageBreakdown(compact=self.compact_layout)
+        self.stage_breakdown = StageBreakdown(
+            compact=self.compact_layout,
+            task_labels=self.task_labels,
+        )
         tile_layout.addWidget(self.stage_breakdown)
         self.tile_grid = QGridLayout()
         self.tile_grid.setSpacing(THEME.spacing_sm)
@@ -1660,6 +1691,7 @@ class MainWindow(QMainWindow):
                 self.latest_image_size,
                 self.stream_placements.get(index, {}),
                 {stage.stage: stage.model_id for stage in self.scenario.stages},
+                self.task_labels,
                 self.stream_metrics.get(index),
                 self.stream_event_text.get(index, ""),
             )

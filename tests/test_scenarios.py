@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -28,6 +29,13 @@ class ScenarioCatalogTests(unittest.TestCase):
             tuple(scenario.id for scenario in self.catalog.values()),
             ("retail", "smart_city", "medical", "gov_defense"),
         )
+
+    def test_every_model_has_a_task_label(self) -> None:
+        payload = json.loads(
+            (ROOT / "config" / "models.json").read_text(encoding="utf-8")
+        )
+        for model in payload["models"]:
+            self.assertTrue(model.get("task_label"), model["id"])
 
     def test_every_vertical_uses_all_three_engines(self) -> None:
         for scenario in self.catalog.values():
