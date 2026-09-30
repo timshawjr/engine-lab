@@ -9,19 +9,17 @@ smooth a value and present it as measured.
 
 ## Phase status
 
-Phases 0–2 are complete and committed locally. Phase 3 is implemented and its full acceptance
-matrix has passed: all four scenarios ran for five minutes at density 1 and one minute at density
-4, followed by a ten-minute density-4 attract cycle. The attract RSS comparison was 3051.39 MiB
-at the first sample after two minutes and 3099.17 MiB at the final sample, measured growth **1.57%**.
-The generated evidence is in `logs/phase3-benchmark-summary.json`, the per-run JSON files, and the
-marked section at the end of `bench_report.md`.
+Phases 0-3 are implemented. The full acceptance matrix has been run on the demo machine
+(300s per scenario at density 1, 60s per scenario at density 4, then a 600s density-4 attract
+cycle): **8 PASS, 1 FAIL**. The FAIL is `gov_defense-d4`, which hung and was killed by Windows as
+an Application Hang — see `docs/STATE.md` section 5A, which is the sign-off blocker.
 
-The Phase 2 literal §11.8 strict-stream result remains an explicit, documented miss on this machine:
-at density 8, zero individual tiles held 90% of the 59.940 FPS retail source with accelerators on,
-and zero did with both accelerators off. The separately labelled aggregate source-rate capacity was
-3.391 stream equivalents with accelerators on versus 0.920 with both off. That aggregate number was
-not substituted for the strict count, and no priority scheduling, source-FPS reduction, frame-drop
-declaration, or metric relabeling was added.
+Memory is not a leak: RSS climbs from 861 MiB to about 2.6 GB during the first ~70 seconds, then
+stays flat. From the 2-minute checkpoint to the end of the attract run (8.5 minutes, 50 scenario
+switches) growth is **+17.9 MiB (0.68%)**. The app settles around **2.6 GB**.
+
+**Read `docs/STATE.md` before changing anything.** It records what is verified, what is still
+broken, and the amendments to `docs/SPEC.md`.
 
 ## Repository map
 
@@ -41,6 +39,30 @@ declaration, or metric relabeling was added.
 `models/`, `media/`, `cache/`, and `logs/` are local/git-ignored runtime data. The repository root
 on this machine is `C:\dev\engine-lab`; the only intentional machine-specific paths are in this
 runbook and `run_demo.bat`.
+
+## Machine setup (a machine with no dev tools)
+
+Script execution may be blocked by policy on the demo machine, so nothing here depends on running
+a `.ps1` or `.bat`:
+
+```cmd
+winget install --id Python.Python.3.12 -e --scope user --accept-package-agreements --accept-source-agreements
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+cd C:\dev\engine-lab
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Open a **new** cmd window after installing Python so `py` and `python` are on PATH. No-admin
+alternative: the standalone `uv` binary zip from
+`https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip`, then
+`uv.exe python install 3.12`, `uv.exe venv --python 3.12 .venv`,
+`uv.exe pip install --python .venv\Scripts\python.exe -r requirements.txt`.
+
+Only the bootstrap is a script. The app and every tool runs through `python.exe`, which script
+policy does not restrict. If `.bat` files are blocked too, launch the app with
+`.venv\Scripts\python.exe -m app.main` instead of `run_demo.bat`.
 
 ## One-time machine verification
 
@@ -63,13 +85,16 @@ and videos must contain an MP4 `ftyp` box. `download_models.py` is idempotent an
 SHA-256 inventory. `probe_telemetry.py` writes the raw PDH instance map and fails closed when no
 NPU counter is found unless its explicit development fallback is requested.
 
-The current local checks on this machine are:
+The current local checks on the demo machine are:
 
 - source verification: **43 PASS, 0 FAIL**;
-- preflight: **89 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model ×
-  NPU/GPU/CPU combination and the four Phase 3 scenario graphs;
+- preflight: **95 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model x
+  NPU/GPU/CPU combination and the four scenario graphs;
 - network-blocked self-test: **11 PASS, 0 FAIL**;
-- unit tests: **25 PASS, 0 FAIL**.
+- unit tests: **48 PASS, 0 FAIL** on `fix/demo-killers` (+5 hangwatch, +5 benchmark-reporting on
+  the later branches).
+
+Re-run them before a show; the commands are in `docs/STATE.md` section 7.
 
 ## Frame-level review harness
 
