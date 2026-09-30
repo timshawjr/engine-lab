@@ -130,7 +130,17 @@ class ScenarioCatalogTests(unittest.TestCase):
         # person is a real shelf signal but must never be refined as a product.
         self.assertNotIn("person", rules["classify_detector_labels"])
         self.assertNotIn("person", rules["business_event_labels"])
-        self.assertIn("pot", rules["business_event_labels"])
+        # Both gates carry the raw COCO label, so they admit the product
+        # classes the checkout footage actually yields (apple, banana,
+        # suitcase for the chip bag, cake/sandwich for the loaf, plus the
+        # container classes). Kitchenware words are vocabulary names, never
+        # detector labels, and must not remain in the event rules.
+        for product in ("apple", "banana", "suitcase", "cake", "sandwich", "bottle"):
+            self.assertIn(product, rules["classify_detector_labels"])
+            self.assertIn(product, rules["business_event_labels"])
+        for kitchenware in ("pot", "mixing bowl", "storage container"):
+            self.assertNotIn(kitchenware, rules["classify_detector_labels"])
+            self.assertNotIn(kitchenware, rules["business_event_labels"])
         # No sampling: the fast pipeline runs every frame at source rate.
         self.assertNotIn("detector_cadence", rules)
 

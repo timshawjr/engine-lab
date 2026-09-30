@@ -79,19 +79,24 @@
           "cup",
           "bottle",
           "wine glass",
-          "vase"
+          "vase",
+          "apple",
+          "banana",
+          "suitcase",
+          "cake",
+          "sandwich"
         ],
         "business_event_labels": [
-          "pot",
-          "mixing bowl",
-          "soup bowl",
-          "plate",
+          "bowl",
           "cup",
-          "glass",
           "bottle",
+          "wine glass",
           "vase",
-          "kettle",
-          "storage container"
+          "apple",
+          "banana",
+          "suitcase",
+          "cake",
+          "sandwich"
         ]
       },
       "ticker": [
@@ -159,7 +164,7 @@
       ],
       "event_rules": {
         "event_window_s": 60.0,
-        "confidence_min": 0.3,
+        "confidence_min": 0.2,
         "iou_threshold": 0.4,
         "max_detections": 100,
         "tracking_iou_threshold": 0.2,
@@ -172,6 +177,7 @@
         "classify_detector_labels": [
           "vehicle"
         ],
+        "classify_top_k": 2,
         "zero_shot_min": 0.22,
         "classify_min_frames": 3
       },

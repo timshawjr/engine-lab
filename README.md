@@ -122,15 +122,30 @@ need `torch`/`transformers`, which are deliberately absent from the production
 Rebuild with:
 
 ```cmd
-<dev-venv>\Scripts\python tools\build_clip_zero_shot.py
+<dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario retail
+<dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario smart_city
 .venv\Scripts\python tools\convert_clip_onnx.py --fp16
 ```
 
+Each vertical that uses CLIP declares its vocabulary by name on the
+`product_classifier` stage in `config/scenarios.json` (`"vocabulary": "retail"`,
+`"vocabulary": "smart_city"`), and `--scenario <name>` bakes that vocabulary's
+pair (`text_embeddings_<name>.npy` + `vocabulary_<name>.json`) into the CLIP
+model directory. A plain run with no `--scenario` rewrites the default pair
+(`text_embeddings.npy` + `vocabulary.json`), which is the fallback when a
+stage's named pair is missing. **If the footage changes, the vocabulary must be
+rebuilt per scenario** (`--scenario` once per vertical) so the declared
+categories still match what the camera sees; the vision tower is shared and
+does not change with the vocabulary.
+
 **Three gates keep the output defensible, all measured rather than assumed:**
 
-1. **Detector allowlist** - only the classes the detector actually gets right on this footage
-   (`bowl`, `cup`, `bottle`, `wine glass`, `vase`) are submitted to CLIP. `person` is excluded
-   explicitly, and so is every unlisted class, so the gate fails closed.
+1. **Detector allowlist** - only the COCO classes whose crops are products on this footage
+   (`bowl`, `cup`, `bottle`, `wine glass`, `vase`, `apple`, `banana`, `suitcase` - the chip bag -,
+   `cake`, `sandwich`) are submitted to CLIP. `person` is excluded
+   explicitly, and so is every unlisted class (on this footage YOLO also reports `oven`, `microwave`
+   and `tv` - 89/21/18 raw detections in the 40 s review - and those crops stay out), so the gate
+   fails closed.
 2. **Per-label business-event gate** - the declared inventory also gates `object_classified` and
    `object_picked_up`. Without it the tracker logged `object_picked_up person`, which is not a
    statement worth making, and on other footage it logged `object_picked_up microwave`.
@@ -138,8 +153,8 @@ Rebuild with:
    track before it is displayed or emitted, and it emits once per track per label rather than once
    per frame.
 
-**Known limit, stated plainly:** the vocabulary is a *category* list, not a SKU database. `pot` is a
-true statement about the crop; it is not a product code and the app does not claim it is one. The
+**Known limit, stated plainly:** the vocabulary is a *category* list, not a SKU database. `bananas`
+is a true statement about the crop; it is not a product code and the app does not claim it is one. The
 second-shelf items sit at roughly 50x50 px, so the weaker vocabulary entries land near the 0.22
 confidence floor and appear on only a few frames each.
 
