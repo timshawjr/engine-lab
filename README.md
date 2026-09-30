@@ -7,6 +7,8 @@ Every displayed utilization or performance value is measured or comes from a cit
 source. Missing counters are labelled as missing; the app does not generate synthetic load or
 smooth a value and present it as measured.
 
+**What this is meant to be, in one page: `docs/GOAL.md`.** Current truth: `docs/STATE.md`.
+
 ## Phase status
 
 Phases 0-3 are implemented. The full acceptance matrix has been run on the demo machine
