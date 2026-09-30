@@ -361,3 +361,77 @@ Generated: 2026-09-30T00:22:54.525614+00:00
 
 The RSS acceptance comparison uses the first measured sample at or after two minutes and the final sample from the 10-minute attract run.
 <!-- PHASE3_BENCHMARK_END -->
+
+## Booth-readiness verification
+
+**Date:** 2026-09-30 · **Branch:** `fix/verticals` · **HEAD:** `e5a4a0b`
+
+Final gate for the booth-readiness plan: the four verification gates, a density-4 stability
+series on `gov_defense`, and one native screenshot per vertical.
+
+### Gate 1 — unit tests
+
+```
+.venv\Scripts\python.exe -m unittest discover -s tests -q
+```
+
+Result (exit 0): `Ran 79 tests in 8.336s` — `OK`.
+
+### Gate 2 — self-test
+
+```
+.venv\Scripts\python.exe -m app.main --selftest
+```
+
+Result (exit 0): `Self-test summary: 11 PASS, 0 FAIL`.
+
+### Gate 3 — preflight
+
+```
+.venv\Scripts\python.exe tools\preflight.py
+```
+
+Result (exit 0): `Summary: 97 PASS, 0 WARN, 0 FAIL · 97 total rows`.
+
+### Gate 4 — source verification
+
+```
+.venv\Scripts\python.exe tools\verify_sources.py
+```
+
+Result (exit 0): `Source verification: 44 PASS, 0 FAIL`.
+
+### gov_defense density-4 stability (SPREAD, ×6)
+
+Six runs of `--scenario gov_defense --density 4 --mode spread --exit-after 60`. Every run exited 0
+with no hang, `4/4` streams processed, and no placement fallbacks:
+
+| Run | Exit | e2e p50 | e2e p95 | e2e max | Fallbacks |
+|---|---:|---:|---:|---:|---|
+| 1 | 0 | 44.71 ms | 55.11 ms | 69.47 ms | none |
+| 2 | 0 | 46.03 ms | 56.99 ms | 68.32 ms | none |
+| 3 | 0 | 46.23 ms | 57.65 ms | 77.96 ms | none |
+| 4 | 0 | 49.08 ms | 62.96 ms | 77.11 ms | none |
+| 5 | 0 | 50.16 ms | 64.31 ms | 71.55 ms | none |
+| 6 | 0 | 46.69 ms | 58.27 ms | 72.51 ms | none |
+
+Diagnostics: `logs/task6-gov-1.json` … `logs/task6-gov-6.json`. End-to-end p50 (~45–50 ms) stays
+above the plan's ~35 ms reference, matching the figure already recorded in the Task 2 note; there is
+no hang.
+
+### Booth screenshots
+
+One native screenshot per vertical:
+
+| Vertical | File | Pixels | Logical (DPR 1.5) |
+|---|---|---|---|
+| retail | `logs/task6-retail.png` | 2880×1410 | 1920×940 |
+| smart_city | `logs/task6-smart_city.png` | 2880×1410 | 1920×940 |
+| medical | `logs/task6-medical.png` | 2880×1410 | 1920×940 |
+| gov_defense | `logs/task6-gov_defense.png` | 2880×1410 | 1920×940 |
+
+The demo display is 2293×960 (working area 2293×912), so a true 1920×1080 window does not fit; the
+requested 1920×1080 window renders at 1920×940 logical pixels and the captures are therefore
+2880×1410 (not 1920×1080). The screen still meets the full-layout threshold (≥1600×900), so each
+capture uses the full (non-compact) layout.
+
