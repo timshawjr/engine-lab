@@ -39,6 +39,24 @@ class RunResult:
     payload: dict[str, Any]
 
 
+def _output_tail(exc: subprocess.TimeoutExpired, limit: int = 1000) -> str:
+    """Return the tail of a timed-out process's output.
+
+    ``TimeoutExpired`` carries whatever the child wrote before it was killed. Without it a
+    timeout row has no evidence at all, which makes the failure impossible to diagnose - and a
+    killed run writes no diagnostics file, so the row must not be able to imply that it did.
+    """
+
+    def _text(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
+    return (_text(exc.stderr) + _text(exc.stdout))[-limit:].strip()
+
+
 def _run(
     spec: RunSpec,
     timeout_padding: float,
@@ -46,6 +64,9 @@ def _run(
     require_rss_checkpoint: bool,
 ) -> RunResult:
     output = LOGS / f"phase3-benchmark-{spec.name}.json"
+    if output.exists():
+        # A previous run's diagnostics must never be citable as evidence for this one.
+        output.unlink()
     command = [
         sys.executable,
         "-m",
@@ -76,8 +97,12 @@ def _run(
             timeout=spec.seconds + timeout_padding,
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        return RunResult(spec, False, f"timeout after {spec.seconds + timeout_padding:g}s", {})
+    except subprocess.TimeoutExpired as exc:
+        tail = _output_tail(exc)
+        detail = f"timeout after {spec.seconds + timeout_padding:g}s"
+        if tail:
+            detail = f"{detail}: {tail}"
+        return RunResult(spec, False, detail, {})
     if completed.returncode != 0:
         tail = (completed.stderr or completed.stdout)[-1000:]
         return RunResult(spec, False, f"exit {completed.returncode}: {tail}", {})
@@ -188,7 +213,14 @@ def _markdown(results: list[RunResult]) -> str:
         "|---|---:|---|---|",
     ]
     for result in results:
-        evidence = f"`logs/phase3-benchmark-{result.spec.name}.json`"
+        diagnostics = LOGS / f"phase3-benchmark-{result.spec.name}.json"
+        # Only cite a file this run actually produced. A failed or killed run writes nothing, and
+        # pointing at a leftover file from an earlier run reads as evidence that does not exist.
+        evidence = (
+            f"`logs/phase3-benchmark-{result.spec.name}.json`"
+            if diagnostics.exists()
+            else "no diagnostics written"
+        )
         lines.append(
             f"| {result.spec.name} | {result.spec.seconds:g}s | "
             f"{'PASS' if result.passed else 'FAIL'} — {result.detail} | {evidence} |"
