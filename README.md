@@ -11,8 +11,13 @@ smooth a value and present it as measured.
 
 Phases 0-3 are implemented. The full acceptance matrix has been run on the demo machine
 (300s per scenario at density 1, 60s per scenario at density 4, then a 600s density-4 attract
-cycle): **8 PASS, 1 FAIL**. The FAIL is `gov_defense-d4`, which hung and was killed by Windows as
-an Application Hang — see `docs/STATE.md` section 5A, which is the sign-off blocker.
+cycle): **8 PASS, 1 FAIL**.
+
+The FAIL is `gov_defense-d4`, which hangs and is killed by Windows as an Application Hang. On a
+dedicated re-test it hung **4 times in 6 runs**, once for 29 minutes. **Do not take this build to a
+show.** The hang watchdog added in `app/hangwatch.py` has captured **zero** stacks across six
+hangs and must not be relied on. See `docs/STATE.md` sections 5A and 5A2, which include three ways
+to get a real stack — `py-spy dump --pid <pid>` while it is hung is the quickest.
 
 Memory is not a leak: RSS climbs from 861 MiB to about 2.6 GB during the first ~70 seconds, then
 stays flat. From the 2-minute checkpoint to the end of the attract run (8.5 minutes, 50 scenario

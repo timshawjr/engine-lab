@@ -5,8 +5,8 @@ build contract (what was asked for, and why) and `AGENTS.md` is the working rule
 and `docs/SPEC.md` disagree, **this file wins** — the spec has been amended in places, and those
 amendments are listed at the bottom.
 
-Last updated: 2026-09-30, after a full review, five fix commits and a complete acceptance run on
-the demo machine.
+Last updated: 2026-09-30 (second session), after the vertical-footage branch was run on the demo
+machine. The hang got worse and the hang watchdog is now known **not** to work — see section 5A.
 
 ---
 
@@ -47,6 +47,28 @@ Commits are authored `Hermes Agent <agent@hermes.local>`.
 
 These are real numbers from the machine, not estimates.
 
+**Scenario footage and events (second session, on `fix/verticals`).** All four verticals now show
+footage that matches the pitch, and the right events fire on it:
+
+| scenario | what the screen showed |
+|---|---|
+| retail | overhead checkout; CLIP naming objects — `apple 62%`, `storage container 41%` |
+| smart_city | aerial intersection; `person_counted · person 41% · crosswalk` |
+| medical | pose skeleton drawn on a person at `97%`; the corrected ticker line is visible |
+| gov_defense | checkpoint footage; **`plate_detected · license plate 34% · perimeter`** |
+
+Two consequences:
+
+- **The plate event does fire on the new clip** (34% confidence), so the copy that was softened
+  when plate legibility was unverified can be restored. `config/scenarios.json` currently says
+  "Detect people and vehicles at the entry point"; it can say plates again.
+- CLIP names generic objects on the retail footage rather than the trained product classes. That is
+  expected — the vocabulary in `tools/clip_vocabulary.py` is a declared store vocabulary, not the
+  12 classes of `product-detection-0001` — but it is worth a look before the show: naming
+  "storage container" on a checkout counter is not a retail story.
+
+Other verified facts:
+
 - **Preflight: 95 PASS, 0 WARN, 0 FAIL** (95 rows), including 33/33 model × device compiles with
   `EXECUTION_DEVICES` placement assertions.
 - **Unit tests: 48 PASS** on the branch the machine tested (`fix/demo-killers`). `+5` hangwatch
@@ -64,16 +86,54 @@ These are real numbers from the machine, not estimates.
 
 ## 5. Open defects, in priority order
 
-**A. gov_defense at density 4 can hang (~1 in 3).** The app stops responding to Windows messages
-and Windows kills it: event log `Application Hang` / `AppHangB1`, no traceback, no diagnostic
-file, and the session log stops right after the availability-cache line. It passes standalone
-(76s for a 60s run) and it is the only scenario with **two GPU detector stages**. Leading suspect:
-the async callback state in `app/engine/runner.py`, where the OpenVINO callback thread writes
-instance attributes that the worker thread then reads after `wait_all()` with no synchronisation —
-the previous review listed "does `wait_all()` guarantee the callback has completed" as unverified.
-**Not fixed.** `app/hangwatch.py` (new) now dumps every thread's stack into the session log if the
-UI thread stalls for 30s, so the next occurrence should name its own line. This is a sign-off
-blocker: the spec says the app must never crash in front of a customer.
+**A. gov_defense at density 4 hangs — 4 runs in 6. This is the sign-off blocker.**
+
+Windows kills the process as an "Application Hang" and nothing is written: no traceback, no
+diagnostic JSON, and a ~457-byte session log that stops immediately after the DeviceAvailability
+line and never reaches `Diagnostic exit`.
+
+| run | wall clock | exit code | JSON |
+|---|---|---|---|
+| 1 | 62.4s | 0 | written |
+| 2 | 421.2s | -805306369 | not written |
+| 3 | 446.3s | -805306369 | not written |
+| 4 | **1721.4s** | -805306369 | not written |
+| 5 | 240.6s | -805306369 | not written |
+| 6 | 9.3s | 0 | written |
+
+- `-805306369` is `0xCFFFFFFF`, the Windows Error Reporting code for a hung application. All four
+  appear in the event log as `Application Hang` / `AppHangB1`.
+- An earlier session saw 2 hangs in 6 (at 80s and 180s). The rate has roughly doubled and the
+  duration is no longer bounded near the 60s target — run 4 sat for **29 minutes**.
+- It is the only scenario with **two GPU detector stages** (`perimeter_detector` + `plate_detector`),
+  and the same scenario passes standalone in 76s. Leading suspect: the async callback state in
+  `app/engine/runner.py`, where the OpenVINO callback thread writes instance attributes that the
+  worker thread then reads after `wait_all()` with no synchronisation. The earlier review listed
+  "does `wait_all()` guarantee the callback has completed" as unverified.
+- **The app must not be taken to a show in this state.**
+
+**A2. `app/hangwatch.py` is unproven and must not be relied on.**
+
+Six hangs across two sessions produced **zero stack dumps**, despite a 30s threshold, a 5s poll,
+and hundreds of opportunities including a 29-minute hang.
+
+The most likely reason: a Python watchdog thread cannot run when the main thread is blocked inside
+a C call that holds the GIL — every Python thread starves, so the watchdog never reaches its own
+poll. A 29-minute hang that never reached its diagnostic exit is consistent with the main thread
+being blocked, which means the UI heartbeat did stop, and the watchdog still produced nothing.
+
+To actually get a stack, in order of preference:
+
+1. **`faulthandler.dump_traceback_later(timeout)` re-armed from the UI heartbeat.** It is a
+   C-level timer, not a Python thread, so it does not depend on another Python thread being
+   scheduled. Calling it again cancels and restarts the timer, so re-arming it from the 1-second
+   clock tick gives "dump if the UI has not ticked for N seconds" with no log spam.
+2. **`py-spy dump --pid <pid>` while it is hung.** It attaches from outside the process and reads
+   the stacks without needing the target's cooperation or the GIL. Run 4 sat for 29 minutes, so
+   there is plenty of time to attach. This is the highest-yield next diagnostic.
+3. **Windows Error Reporting local dumps** for `python.exe` (registry key
+   `HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps`), then
+   `cdb -z <dump> -c "~*k; !analyze -v; q"`. OS-level, needs nothing from Python at all.
 
 **B. Numbers on screen that can mislead.** All still open:
 - the 60s NPU sparkline can blend system-counter samples with app-measured samples in one line;
@@ -114,8 +174,10 @@ unreachable dead code that would `KeyError` if the spec's `classifier` stage wer
   membership would make a whole engine disappear from the UI);
 - whether the driver-version probe succeeds (it decides whether the availability cache can ever
   invalidate after a driver update);
-- plate legibility in the government clip — so that scenario's copy no longer promises plate reads;
-- whether the new clips look right in the app.
+- whether the new clips look right *in the app* — the screenshots are 3440×1440 because the display
+  is 2293×960 at DPR 2, so the app selects its **compact** layout at that height; the video panel
+  is capped at 430px there, which is why the footage still reads small on screen.
+- **why the app hangs** — no stack has ever been captured (see 5A and 5A2).
 
 ## 7. How to verify anything
 
