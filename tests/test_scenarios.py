@@ -175,7 +175,10 @@ class ScenarioCatalogTests(unittest.TestCase):
         rules = self.catalog["smart_city"].event_rules
         for removed in ("classify_output_labels", "classification_min"):
             self.assertNotIn(removed, rules)
-        self.assertEqual(rules["classify_detector_labels"], ["vehicle"])
+        # The montage's crosswalks are full of pedestrians, and the declared
+        # smart_city vocabulary carries a "person" entry, so person crops are
+        # named too; vehicle crops remain the counting answer.
+        self.assertEqual(rules["classify_detector_labels"], ["vehicle", "person"])
         # Retail and smart city are the two CLIP scenarios; medical and
         # gov_defense name nothing.
         self.assertEqual(
@@ -196,7 +199,12 @@ class ScenarioCatalogTests(unittest.TestCase):
             # must be declared before its crop is submitted.
             self.assertGreaterEqual(int(rules["classify_min_frames"]), 2)
             self.assertTrue(rules["classify_detector_labels"])
-            self.assertNotIn("person", rules["classify_detector_labels"])
+            # person is banned from the ImageNet classifier path in code
+            # (app/scenarios/retail.py), but smart_city runs the zero-shot CLIP
+            # stage, whose declared vocabulary carries a "person" entry for the
+            # montage's crosswalks.
+            if scenario.id != "smart_city":
+                self.assertNotIn("person", rules["classify_detector_labels"])
             self.assertIn("zero_shot_min", rules)
             self.assertGreater(float(rules["zero_shot_min"]), 0.0)
 

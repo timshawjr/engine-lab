@@ -100,7 +100,8 @@ class EventTrackerTests(unittest.TestCase):
 
         size = (768, 432)
         tracker = EventTracker(self.catalog["smart_city"], 1)
-        vehicle = Detection(600, 80, 700, 340, "vehicle", 0.9)
+        # centre (650, 380) -> (0.846, 0.880): inside outgoing_lane [0.0, 0.75, 1.0, 0.25]
+        vehicle = Detection(600, 310, 700, 450, "vehicle", 0.9)
         emitted = 0
         for index in range(40):
             _, events = tracker.update((vehicle,), now=300.0 + index * 0.05, source_size=size)
@@ -168,13 +169,13 @@ class EventTrackerTests(unittest.TestCase):
 
         size = (768, 432)
         tracker = EventTracker(self.catalog["smart_city"], 1)
-        # centre x=380/768=0.495 -> inside the crosswalk ROI [0.38, 0.0, 0.24, 1.0]
+        # centre (380, 210) -> (0.495, 0.486): inside the crosswalk band [0.0, 0.3, 1.0, 0.5]
         person = Detection(330, 80, 430, 340, "person", 0.9)
         tracker.update((person,), now=200.0, source_size=size)
         _, events = tracker.update((person,), now=200.5, source_size=size)
         self.assertIn("person_counted", {event.type for event in events})
-        # centre x=650/768=0.846 -> inside outgoing_lane [0.74, 0.08, 0.24, 0.84]
-        vehicle = Detection(600, 80, 700, 340, "vehicle", 0.9)
+        # centre (650, 380) -> (0.846, 0.880): inside outgoing_lane [0.0, 0.75, 1.0, 0.25]
+        vehicle = Detection(600, 310, 700, 450, "vehicle", 0.9)
         tracker.update((vehicle,), now=201.0, source_size=size)
         _, events = tracker.update((vehicle,), now=201.5, source_size=size)
         self.assertIn("vehicle_counted", {event.type for event in events})

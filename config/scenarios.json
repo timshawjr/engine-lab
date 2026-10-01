@@ -111,7 +111,7 @@
       "title": "Smart City / Traffic",
       "vertical": "Intersection analytics",
       "business_line": "Intersection analytics at the edge: vehicle and pedestrian counting without a server.",
-      "video_id": "smart_city_intersection",
+      "video_id": "smart_city_montage",
       "stages": [
         {
           "stage": "detector",
@@ -136,28 +136,28 @@
           "roi": [
             0.0,
             0.0,
-            0.34,
-            1.0
+            1.0,
+            0.35
           ],
           "kind": "vehicle_entry"
         },
         {
           "name": "crosswalk",
           "roi": [
-            0.34,
             0.0,
-            0.32,
-            1.0
+            0.3,
+            1.0,
+            0.5
           ],
           "kind": "person_entry"
         },
         {
           "name": "outgoing_lane",
           "roi": [
-            0.66,
             0.0,
-            0.34,
-            1.0
+            0.75,
+            1.0,
+            0.25
           ],
           "kind": "vehicle_exit"
         }
@@ -175,7 +175,8 @@
         "track_persist_s": 1.0,
         "event_cooldown_s": 1.0,
         "classify_detector_labels": [
-          "vehicle"
+          "vehicle",
+          "person"
         ],
         "classify_top_k": 2,
         "zero_shot_min": 0.22,

@@ -254,6 +254,34 @@
       "license": "Mixkit Free License - commercial use, no attribution"
     },
     {
+      "id": "smart_city_montage",
+      "file": "smart-city-traffic-montage.mp4",
+      "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
+      "sha256": "c048115b5d5cf3ab5012c7d29d2d81588a78753f2bd68916c15fe5d63dd03a4f",
+      "verified": "re-verified 2026-10-01: 200 video/mp4, 768x432, 30 fps, 1800 frames (60 s), 36219268 bytes, sha256 computed locally. Frame-checked: montage of street-level and overhead intersection scenes with crosswalks, pedestrians, cars, trucks and buses - the crossroad detector's training framing. Replaces smart_city_intersection, on which crossroad-1016 averaged ~0.5 boxes/frame; on this montage it measures 728 detections over 30 frames.",
+      "source_parts": [
+        {
+          "id": "mixkit-4000-busy-street.mp4",
+          "url": "https://assets.mixkit.co/videos/4000/4000-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/busy-street-in-the-city-4000/",
+          "license": "https://mixkit.co/license/#videoFree"
+        },
+        {
+          "id": "mixkit-4272-traffic-light.mp4",
+          "url": "https://assets.mixkit.co/videos/4272/4272-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/traffic-light-directing-traffic-4272/",
+          "license": "https://mixkit.co/license/#videoFree"
+        },
+        {
+          "id": "mixkit-4343-crossroads.mp4",
+          "url": "https://assets.mixkit.co/videos/4343/4343-720.mp4",
+          "source_page": "https://mixkit.co/free-stock-video/traffic-in-a-crossroads-4343/",
+          "license": "https://mixkit.co/license/#videoFree"
+        }
+      ],
+      "license": "Mixkit Free License - commercial use, no attribution"
+    },
+    {
       "id": "medical_eldercare",
       "file": "medical-eldercare.mp4",
       "url": "https://assets.mixkit.co/videos/5559/5559-720.mp4",
