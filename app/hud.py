@@ -602,7 +602,9 @@ class EngineGauge(QWidget):
         self.scenario_devices: set[str] = {"NPU", "GPU", "CPU"}
         self._last_active_at: float | None = None
         self._history: deque[tuple[float, float]] = deque()
-        self.setMinimumHeight(115 if compact else 160)
+        self.setMinimumHeight(
+            THEME.gauge_min_height_compact if compact else THEME.gauge_min_height
+        )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def update_metric(
@@ -708,48 +710,65 @@ class EngineGauge(QWidget):
         painter.setFont(QFont(THEME.font_family, 16 if self.compact else THEME.font_semibold, QFont.Weight.Bold))
         painter.setPen(QPen(QColor(accent)))
         painter.drawText(
-            QRectF(x, y, width * 0.5, 28),
+            QRectF(x, y, width * 0.5, THEME.gauge_header_height),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             f"{self.engine} · {provider}",
         )
         state_text = self._state_text(state, value, age_s)
         painter.setFont(QFont(THEME.font_family, 14 if self.compact else THEME.font_badge, QFont.Weight.DemiBold))
         painter.drawText(
-            QRectF(x + width * 0.35, y, width * 0.65, 28),
+            QRectF(x + width * 0.35, y, width * 0.65, THEME.gauge_header_height),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             state_text,
         )
         not_used = state == "NOT USED BY THIS VERTICAL"
         value_text = "—" if (value is None or not_used) else f"{value:.0f}%"
-        value_font = QFont(THEME.font_family, 40 if self.compact else 56, QFont.Weight.Bold)
+        # Lay the value row and the bar out from the tile's actual height so
+        # the gauge stays inside its tile when the column is compressed.
+        header_h = THEME.gauge_header_height
+        bar_h = 12 if self.compact else THEME.gauge_height
+        gap = THEME.spacing_sm
+        pad_top = THEME.spacing_xs
+        pad_bottom = THEME.spacing_xs
+        # When the tile is shorter than the preferred geometry, shrink the bar
+        # and the gaps first so the value row keeps its minimum height.
+        deficit = (
+            pad_top + header_h + gap + THEME.gauge_value_area_min + gap + bar_h + pad_bottom
+        ) - self.height()
+        if deficit > 0:
+            shrink = min(deficit, bar_h - THEME.gauge_bar_min)
+            bar_h -= shrink
+            deficit -= shrink
+        if deficit > 0:
+            gap = max(THEME.gauge_gap_min, gap - (deficit + 1) // 2)
+        value_top = pad_top + header_h + gap
+        value_avail = self.height() - pad_bottom - bar_h - gap - value_top
+        # The value font scales with the available height; a bold Segoe UI
+        # line is about 1.77x the point size, so divide to fit exactly.
+        max_font = THEME.gauge_value_font_compact if self.compact else THEME.gauge_value_font
+        min_font = THEME.gauge_value_font_compact_min if self.compact else THEME.gauge_value_font_min
+        value_size = max(min_font, min(max_font, int(value_avail / THEME.gauge_value_line_ratio)))
+        value_font = QFont(THEME.font_family, value_size, QFont.Weight.Bold)
         painter.setFont(value_font)
+        text_h = painter.fontMetrics().height()
+        if text_h > value_avail:
+            # One correction pass: font metrics are ~linear in point size.
+            value_size = max(min_font, int(value_size * value_avail / text_h))
+            value_font = QFont(THEME.font_family, value_size, QFont.Weight.Bold)
+            painter.setFont(value_font)
+            text_h = painter.fontMetrics().height()
+        value_rect = QRectF(x, value_top, width * 0.62, text_h)
         painter.setPen(QPen(QColor(THEME.text_muted if state != "ACTIVE" else THEME.text)))
-        value_height = max(56 if self.compact else 72, painter.fontMetrics().height() + 10)
-        value_rect = QRectF(
-            x,
-            y + (16 if self.compact else 20),
-            width * 0.62,
-            value_height,
-        )
         painter.drawText(
             value_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             value_text,
         )
-        spark_rect = QRectF(
-            x + width * 0.64,
-            y + (24 if self.compact else 28),
-            width * 0.36,
-            60 if self.compact else 70,
-        )
+        spark_h = min(60 if self.compact else 70, value_avail)
+        spark_rect = QRectF(x + width * 0.64, value_top, width * 0.36, spark_h)
         if not not_used:
             self._draw_sparkline(painter, spark_rect, accent)
-        bar = QRectF(
-            x,
-            value_rect.bottom() + 8 if self.compact else y + 124,
-            width,
-            12 if self.compact else THEME.gauge_height,
-        )
+        bar = QRectF(x, self.height() - pad_bottom - bar_h, width, bar_h)
         painter.fillRect(bar, QColor(THEME.border))
         if value is not None and not not_used:
             fraction = max(0.0, min(1.0, value / THEME.gauge_max_percent))

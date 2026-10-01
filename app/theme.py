@@ -43,6 +43,20 @@ class Theme:
     spacing_xl: int = 32
 
     gauge_height: int = 28
+    # Engine-gauge tile layout. The tile renders its header, value and bar
+    # from its actual widget height, so the column may compress the tiles
+    # below the design height without truncating the value.
+    gauge_min_height: int = 76
+    gauge_min_height_compact: int = 115
+    gauge_header_height: int = 28
+    gauge_value_font: int = 56
+    gauge_value_font_compact: int = 40
+    gauge_value_font_min: int = 12
+    gauge_value_font_compact_min: int = 10
+    gauge_value_area_min: int = 20
+    gauge_bar_min: int = 8
+    gauge_gap_min: int = 4
+    gauge_value_line_ratio: float = 1.77
     overlay_label_height: int = 30
     overlay_badge_width: int = 300
     overlay_border: int = 3
