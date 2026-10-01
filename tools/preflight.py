@@ -663,7 +663,15 @@ def _phase3_scenario_checks(
 ) -> None:
     from app.engine.pipelines import ScenarioModelRegistry, load_scenario_catalog
 
-    expected_ids = ("retail", "metro", "health", "federal")
+    expected_ids = (
+        "retail",
+        "metro",
+        "manufacturing",
+        "robotics",
+        "education",
+        "health",
+        "federal",
+    )
     try:
         catalog = load_scenario_catalog(
             ROOT / "config" / "scenarios.json",
@@ -688,7 +696,7 @@ def _phase3_scenario_checks(
             "ordered scenario catalog",
             "FAIL",
             f"expected {expected_ids}, found {actual_ids}",
-            "Restore deterministic scenario order retail, metro, health, federal",
+            "Restore deterministic scenario order retail, metro, manufacturing, robotics, education, health, federal",
         )
     for scenario in catalog.values():
         fallback_devices: list[str] = []
@@ -701,6 +709,13 @@ def _phase3_scenario_checks(
             required_rules = {
                 "retail": {"confidence_min", "iou_threshold", "picked_up_dwell_s"},
                 "metro": {"confidence_min", "count_dwell_s"},
+                "manufacturing": {"confidence_min", "count_dwell_s"},
+                "robotics": {"confidence_min", "count_dwell_s"},
+                "education": {
+                    "confidence_min",
+                    "count_dwell_s",
+                    "pose_keypoint_threshold",
+                },
                 "health": {"confidence_min", "fall_angle_deg", "posture_dwell_s"},
                 "federal": {"confidence_min", "plate_confidence_min"},
             }[scenario.id]

@@ -24,10 +24,18 @@ class ScenarioCatalogTests(unittest.TestCase):
             ROOT / "media",
         )
 
-    def test_exact_four_scenario_order(self) -> None:
+    def test_exact_seven_scenario_order(self) -> None:
         self.assertEqual(
             tuple(scenario.id for scenario in self.catalog.values()),
-            ("retail", "metro", "health", "federal"),
+            (
+                "retail",
+                "metro",
+                "manufacturing",
+                "robotics",
+                "education",
+                "health",
+                "federal",
+            ),
         )
 
     def test_every_model_has_a_task_label(self) -> None:
@@ -355,6 +363,78 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(assignments["perimeter_detector"].requested_device, "NPU")
         self.assertEqual(assignments["vehicle_detector"].requested_device, "NPU")
         self.assertEqual(assignments["plate_detector"].requested_device, "NPU")
+
+    def test_manufacturing_detects_people_and_vehicles_on_three_engines(self) -> None:
+        """Manufacturing runs crossroad detection on the NPU, worker presence
+        on the GPU, and zone-occupancy counting on the CPU.
+
+        The store-aisle footage is genuinely sparse (2.9 person/frame in
+        screening), so the scenario makes no CLIP claim: a PPE vocabulary was
+        measured on this footage and named ordinary shoppers as "safety vest"
+        (52/96 crops) and "hard hat" (27/96) at a mean top-1 score of 0.238,
+        which is noise, not PPE detection.
+        """
+        stages = {stage.stage: stage for stage in self.catalog["manufacturing"].stages}
+        self.assertEqual(stages["detector"].model_id, "person-vehicle-bike-detection-crossroad-1016")
+        self.assertEqual(stages["detector"].device_pref, "NPU")
+        self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
+        self.assertEqual(stages["person_detector"].device_pref, "GPU")
+        self.assertEqual(stages["zone_event"].device_pref, "CPU")
+        # No CLIP stage: the PPE vocabulary measured as noise on this footage.
+        self.assertNotIn("product_classifier", stages)
+        rules = self.catalog["manufacturing"].event_rules
+        self.assertNotIn("classify_detector_labels", rules)
+        self.assertNotIn("zero_shot_min", rules)
+        self.assertIn("count_dwell_s", rules)
+
+    def test_robotics_detects_people_on_three_engines(self) -> None:
+        """Robotics runs crossroad detection on the NPU, worker presence on the
+        GPU, and zone-breach counting on the CPU."""
+        stages = {stage.stage: stage for stage in self.catalog["robotics"].stages}
+        self.assertEqual(stages["detector"].model_id, "person-vehicle-bike-detection-crossroad-1016")
+        self.assertEqual(stages["detector"].device_pref, "NPU")
+        self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
+        self.assertEqual(stages["person_detector"].device_pref, "GPU")
+        self.assertEqual(stages["zone_event"].device_pref, "CPU")
+        self.assertNotIn("product_classifier", stages)
+        rules = self.catalog["robotics"].event_rules
+        self.assertNotIn("classify_detector_labels", rules)
+        self.assertIn("count_dwell_s", rules)
+
+    def test_education_runs_pose_on_npu_and_counting_on_cpu(self) -> None:
+        """Education runs crossroad detection on the NPU, worker presence on the
+        GPU, pose estimation on the NPU, and attendance counting on the CPU."""
+        stages = {stage.stage: stage for stage in self.catalog["education"].stages}
+        self.assertEqual(stages["detector"].model_id, "person-vehicle-bike-detection-crossroad-1016")
+        self.assertEqual(stages["detector"].device_pref, "NPU")
+        self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
+        self.assertEqual(stages["person_detector"].device_pref, "GPU")
+        self.assertEqual(stages["pose"].model_id, "human-pose-estimation-0001")
+        self.assertEqual(stages["pose"].device_pref, "NPU")
+        self.assertEqual(stages["posture_event"].device_pref, "CPU")
+        rules = self.catalog["education"].event_rules
+        self.assertIn("pose_keypoint_threshold", rules)
+        self.assertIn("count_dwell_s", rules)
+
+    def test_new_verticals_spread_assignments(self) -> None:
+        """Each new vertical places its detector on the NPU, its person
+        detector on the GPU, and its event stage on the CPU in spread mode."""
+        policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
+        for scenario_id in ("manufacturing", "robotics", "education"):
+            assignments = {
+                item.stage: item
+                for item in build_stage_assignments(
+                    policy, self.catalog[scenario_id], 0
+                )
+            }
+            self.assertEqual(assignments["detector"].requested_device, "NPU")
+            self.assertEqual(assignments["person_detector"].requested_device, "GPU")
+            event_stage = next(
+                stage
+                for stage in ("zone_event", "posture_event")
+                if stage in assignments
+            )
+            self.assertEqual(assignments[event_stage].requested_device, "CPU")
 
     def test_ssd_normalized_boxes_are_converted_to_source_pixels(self) -> None:
         output = np.array(

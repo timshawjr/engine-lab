@@ -437,3 +437,98 @@ requested 1920×1080 window renders at 1920×940 logical pixels and the captures
 2880×1410 (not 1920×1080). The screen still meets the full-layout threshold (≥1600×900), so each
 capture uses the full (non-compact) layout.
 
+## Open Edge Platform suite expansion
+
+Commit `120964c` renamed the four existing verticals onto Intel's Open Edge Platform suite
+taxonomy (`smart_city`→`metro`, `medical`→`health`, `gov_defense`→`federal`; `retail` unchanged) with
+no behaviour change. The follow-up commit added the three suites the demo was missing:
+`manufacturing`, `robotics` and `education`.
+
+### Footage screening that drove the choices
+
+Every cached clip was screened before any scenario was wired in, because footage — not the model —
+is the dominant failure mode in this demo. Screening was uniform sampling of 40 frames per clip
+(`person-detection-retail-0013` @0.3, `person-vehicle-bike-detection-crossroad-1016` @0.2, on GPU):
+
+| Clip | person/frame | vehicle/frame | max conf | Verdict |
+|---|---:|---:|---:|---|
+| `smart-city-traffic-montage.mp4` | 11.1 | 23.2 | 1.00 | selected for `metro` |
+| `store-aisle-detection.mp4` | 2.9 | 4.9 | 1.00 | selected for `manufacturing` |
+| `medical-eldercare.mp4` | 2.5 | 2.5 | 1.00 | already in use by `health` |
+| `one-by-one-person-detection.mp4` | 0.8 | 1.2 | 1.00 | selected for `robotics` |
+| `face-demographics-walking.mp4` | 0.6 | 0.7 | 1.00 | selected for `education` |
+| `head-pose-face-detection-male.mp4` | 0.0 | 1.0 | 0.83 | rejected — person model cannot see it |
+| `car-detection.mp4` | 0.0 | 0.5 | 1.00 | rejected — no usable subjects |
+| `smart-city-intersection.mp4` | 0.2 | 0.7 | 0.68 | rejected — already replaced in `efa7178` |
+| `worker-zone-detection.mp4` | 0.9 | 0.9 | 1.00 | **excluded** — on disk but absent from `models/download_manifest.json`, so it has no verified source URL and a fresh setup would not fetch it |
+
+Sampling note: an earlier screen that read only the first 40 frames of each clip ranked
+`worker-zone-detection.mp4` and `one-by-one-person-detection.mp4` as detecting nothing. Uniform
+sampling across each clip showed both do detect. Any future footage screening must sample
+uniformly, not from frame 0.
+
+### Rejected: zero-shot CLIP PPE stage for manufacturing
+
+A PPE vocabulary (`hard hat`, `safety vest`, `gloves`) was measured on the manufacturing footage
+before being adopted. It failed: 52/96 crops were named `safety vest` and 27/96 `hard hat` at a
+mean top-1 score of 0.238, on footage that shows ordinary shoppers in a store aisle. That is
+noise, not PPE detection, so no CLIP stage ships. `manufacturing` carries no classifier and makes
+no PPE claim. This is the same failure mode previously removed from the retail tile.
+
+### Measured results, all seven verticals
+
+`tools\review_sessions.py --seconds 20`, mean raw detections per frame, zero stream errors in every
+run:
+
+| Vertical | Frames | det/frame | Max in a frame | Tracks | Errors | Stages placed |
+|---|---:|---:|---:|---:|---:|---|
+| `retail` | 333 | 0.83 | 3 | 17 | 0 | NPU, GPU.0 |
+| `metro` | 362 | 34.69 | 53 | 530 | 0 | NPU, GPU.0 |
+| `manufacturing` | 1149 | 4.41 | 8 | 27 | 0 | NPU, GPU.0 |
+| `robotics` | 200 | 1.65 | 3 | 4 | 0 | NPU, GPU.0 |
+| `education` | 240 | 0.88 | 4 | 6 | 0 | NPU, GPU.0, NPU (pose) |
+| `health` | 467 | 2.47 | 7 | 22 | 0 | GPU.0, NPU |
+| `federal` | 451 | 8.79 | 18 | 317 | 0 | GPU.0, NPU, GPU.0 |
+
+Placement is read from `EXECUTION_DEVICES` in each run's `frames.jsonl`, never from the requested
+preference. The new verticals place `detector` on NPU (`EXECUTION_DEVICES=['NPU']`),
+`person_detector` on GPU (`['GPU.0']`) and their event logic on CPU, matching the pattern already
+established by the verified verticals.
+
+Throughput on the new suites, as displayed in the HUD on the captured frames: manufacturing
+387.0 det/s at 55.5 FPS, education 170.4 det/s at 12.0 FPS (four stages), robotics 10.0 FPS.
+
+### Gates after the expansion
+
+| Gate | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 83 tests ... OK` (exit 0; was 79 — four new tests) |
+| `python -m app.main --selftest` | `11 PASS, 0 FAIL` (exit 0); "7 ordered scenarios, 23 stages" |
+| `python tools/preflight.py` | `101 PASS, 0 WARN, 0 FAIL` (exit 0; was 98 — three new scenario rows) |
+
+### Booth screenshots for the new suites
+
+| Vertical | File | Pixels |
+|---|---|---|
+| manufacturing | `logs/b-manufacturing.png` | 2880×1410 |
+| robotics | `logs/b-robotics.png` | 2880×1410 |
+| education | `logs/b-education.png` | 2880×1410 |
+
+Inspected individually. Manufacturing shows 7 detections (`person 100%`, `person 63%`, `person 39%`,
+`person 29%`) with a `person_counted` event and both zones drawn. Education shows 4 detections
+(100% / 99% / 85%) with a live pose skeleton over one subject. Robotics captured a frame with
+**0 detections** — the tile showed an empty chair and floor while a `person_counted · person 98%`
+event from earlier in the run was still displayed. That is the honest state of that suite: people
+do appear and are detected (267 person detections across 200 frames), but the clip has quiet
+stretches and a booth visitor may land on an empty frame. This is recorded rather than hidden.
+
+### Known limitations
+
+- The three added suites are sparser than `metro` and `federal` because their footage has fewer
+  detectable subjects. Robotics and education are the weakest.
+- No PPE or attribute claim is made anywhere, because the measured CLIP evidence did not support one.
+- `worker-zone-detection.mp4` is the best unused manufacturing clip but is unmanifested and has no
+  verified source URL, so it is deliberately not wired in. Adding it requires sourcing a real URL
+  and recording it, not inventing one.
+
+

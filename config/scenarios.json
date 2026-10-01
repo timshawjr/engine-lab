@@ -194,6 +194,219 @@
       ]
     },
     {
+      "id": "manufacturing",
+      "title": "Manufacturing",
+      "vertical": "Manufacturing",
+      "business_line": "Aisle presence and safety: people and vehicles detected on the NPU, worker presence confirmed on the GPU, and zone-occupancy counting on the CPU — all on one SoC.",
+      "video_id": "store_aisle_alt",
+      "stages": [
+        {
+          "stage": "detector",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "person_detector",
+          "model_id": "person-detection-retail-0013",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "zone_event",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "aisle_entry",
+          "roi": [
+            0.15,
+            0.65,
+            0.7,
+            0.35
+          ],
+          "kind": "person_entry"
+        },
+        {
+          "name": "work_cell",
+          "roi": [
+            0.1,
+            0.15,
+            0.8,
+            0.5
+          ],
+          "kind": "person_entry"
+        },
+        {
+          "name": "vehicle_lane",
+          "roi": [
+            0.0,
+            0.0,
+            1.0,
+            0.3
+          ],
+          "kind": "vehicle_entry"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.2,
+        "iou_threshold": 0.4,
+        "max_detections": 100,
+        "tracking_iou_threshold": 0.2,
+        "tracking_min_iou": 0.05,
+        "tracking_center_distance": 0.8,
+        "max_track_misses": 12,
+        "count_dwell_s": 0.4,
+        "track_persist_s": 1.0,
+        "event_cooldown_s": 1.0
+      },
+      "ticker": [
+        "Detect people and vehicles in the aisle",
+        "Confirm worker presence on the GPU",
+        "Count zone occupancy on the CPU",
+        "No server round-trip"
+      ]
+    },
+    {
+      "id": "robotics",
+      "title": "Robotics",
+      "vertical": "Robotics",
+      "business_line": "Human-approach safety for mobile robots: person detection on the NPU, worker presence on the GPU, and zone-breach events on the CPU — all on one SoC.",
+      "video_id": "queue_alt",
+      "stages": [
+        {
+          "stage": "detector",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "person_detector",
+          "model_id": "person-detection-retail-0013",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "zone_event",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "approach_zone",
+          "roi": [
+            0.2,
+            0.3,
+            0.6,
+            0.7
+          ],
+          "kind": "person_entry"
+        },
+        {
+          "name": "queue_lane",
+          "roi": [
+            0.0,
+            0.0,
+            1.0,
+            0.4
+          ],
+          "kind": "person_entry"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.2,
+        "iou_threshold": 0.4,
+        "max_detections": 100,
+        "tracking_iou_threshold": 0.2,
+        "tracking_min_iou": 0.05,
+        "tracking_center_distance": 0.8,
+        "max_track_misses": 12,
+        "count_dwell_s": 0.4,
+        "track_persist_s": 1.0,
+        "event_cooldown_s": 1.0
+      },
+      "ticker": [
+        "Detect each person in the queue",
+        "Track approach by measured IoU",
+        "Zone-breach alert on the CPU",
+        "No server round-trip"
+      ]
+    },
+    {
+      "id": "education",
+      "title": "Education",
+      "vertical": "Education",
+      "business_line": "Classroom presence and attendance: person detection on the NPU, pose estimation for posture, and counting events on the CPU — no video leaves the room.",
+      "video_id": "walking_people",
+      "stages": [
+        {
+          "stage": "detector",
+          "model_id": "person-vehicle-bike-detection-crossroad-1016",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "person_detector",
+          "model_id": "person-detection-retail-0013",
+          "device_pref": "GPU"
+        },
+        {
+          "stage": "pose",
+          "model_id": "human-pose-estimation-0001",
+          "device_pref": "NPU"
+        },
+        {
+          "stage": "posture_event",
+          "model_id": "human-pose-estimation-0001",
+          "device_pref": "CPU"
+        }
+      ],
+      "zones": [
+        {
+          "name": "classroom",
+          "roi": [
+            0.1,
+            0.1,
+            0.8,
+            0.8
+          ],
+          "kind": "person_entry"
+        },
+        {
+          "name": "aisle",
+          "roi": [
+            0.0,
+            0.6,
+            1.0,
+            0.4
+          ],
+          "kind": "person_entry"
+        }
+      ],
+      "event_rules": {
+        "event_window_s": 60.0,
+        "confidence_min": 0.3,
+        "iou_threshold": 0.4,
+        "max_detections": 100,
+        "tracking_iou_threshold": 0.15,
+        "tracking_min_iou": 0.02,
+        "tracking_center_distance": 0.8,
+        "max_track_misses": 10,
+        "count_dwell_s": 0.4,
+        "track_persist_s": 1.0,
+        "pose_keypoint_threshold": 0.3,
+        "fall_angle_deg": 55.0,
+        "posture_dwell_s": 0.8,
+        "event_cooldown_s": 4.0
+      },
+      "ticker": [
+        "Detect each person in the room",
+        "Estimate pose entirely on-device",
+        "Count attendance by zone",
+        "No video leaves the room"
+      ]
+    },
+    {
       "id": "health",
       "title": "Health and Life Sciences",
       "vertical": "Health and Life Sciences",

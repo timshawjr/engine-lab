@@ -33,7 +33,15 @@ REQUIRED_CONFIG = ROOT / "config" / "models.json"
 REQUIRED_PROFILES = ROOT / "config" / "platform_profiles.json"
 REQUIRED_SCENARIOS = ROOT / "config" / "scenarios.json"
 TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
-SCENARIO_IDS = ("retail", "metro", "health", "federal")
+SCENARIO_IDS = (
+    "retail",
+    "metro",
+    "manufacturing",
+    "robotics",
+    "education",
+    "health",
+    "federal",
+)
 
 LOGGER = logging.getLogger("engine_lab")
 
@@ -303,7 +311,7 @@ def _selftest() -> int:
                 if media_path is None or not media_path.is_file():
                     raise RuntimeError(f"scenario {scenario.id} media is missing")
                 stage_count += len(scenario.stages)
-            return f"4 ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
+            return f"7 ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
 
         _selftest_check(checks, "Phase 3 local inventory", phase3_local_inventory_check)
     finally:

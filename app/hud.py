@@ -68,7 +68,15 @@ from app.theme import THEME
 
 
 LOGGER = logging.getLogger("engine_lab")
-SCENARIO_ORDER = ("retail", "metro", "health", "federal")
+SCENARIO_ORDER = (
+    "retail",
+    "metro",
+    "manufacturing",
+    "robotics",
+    "education",
+    "health",
+    "federal",
+)
 POSE_SKELETON = (
     (1, 2),
     (1, 5),
@@ -1426,7 +1434,7 @@ class MainWindow(QMainWindow):
         root.addLayout(bottom_row, 0)
         bottom_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self.status_label = _label(
-            "1-4 scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
+            "1-7 scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
             color=THEME.text_muted,
         )
         root.addWidget(self.status_label)
@@ -2003,8 +2011,14 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_2:
             self.switch_scenario("metro")
         elif key == Qt.Key.Key_3:
-            self.switch_scenario("health")
+            self.switch_scenario("manufacturing")
         elif key == Qt.Key.Key_4:
+            self.switch_scenario("robotics")
+        elif key == Qt.Key.Key_5:
+            self.switch_scenario("education")
+        elif key == Qt.Key.Key_6:
+            self.switch_scenario("health")
+        elif key == Qt.Key.Key_7:
             self.switch_scenario("federal")
         elif key == Qt.Key.Key_N:
             self.toggle_npu()

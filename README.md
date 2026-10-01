@@ -10,7 +10,8 @@ smooth a value and present it as measured.
 ## Phase status
 
 Phases 0–2 are complete and committed locally. Phase 3 is implemented and its full acceptance
-matrix has passed: all four scenarios ran for five minutes at density 1 and one minute at density
+matrix has passed for the four scenarios that existed at the time (`retail`, `metro`, `health`,
+`federal`): all four ran for five minutes at density 1 and one minute at density
 4, followed by a ten-minute density-4 attract cycle. The attract RSS comparison was 3051.39 MiB
 at the first sample after two minutes and 3099.17 MiB at the final sample, measured growth **1.57%**.
 The generated evidence is in `logs/phase3-benchmark-summary.json`, the per-run JSON files, and the
@@ -29,11 +30,11 @@ declaration, or metric relabeling was added.
 - `app/hud.py` — Qt booth UI, overlays, gauges, stream tiles, ticker, attract mode, F1 operator view.
 - `app/engine/device_policy.py` — modes, NPU/GPU toggles, density, and explicit round-robin placement.
 - `app/engine/availability.py` — model × device startup gate, `EXECUTION_DEVICES` validation, fingerprint cache.
-- `app/engine/pipelines.py` — four scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
+- `app/engine/pipelines.py` — seven scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
 - `app/engine/stages.py` — static-shape preprocessing, YOLO/SSD/classification/pose postprocessing.
 - `app/engine/events.py` — business-event dictionaries and track/zone state.
 - `app/telemetry/` — PDH GPU/NPU counters, SetupAPI device identity, psutil CPU, and 5 Hz sampling.
-- `config/scenarios.json` — the four normalized-zone scenario definitions and event thresholds.
+- `config/scenarios.json` — the seven normalized-zone scenario definitions and event thresholds.
 - `tools/preflight.py` — the local PASS/FAIL gate.
 - `tools/benchmark_matrix.py` — the long-run scenario × density acceptance matrix.
 - `bench_report.md` — measured evidence, including the explicit Phase 2 miss.
@@ -67,7 +68,7 @@ The current local checks on this machine are:
 
 - source verification: **43 PASS, 0 FAIL**;
 - preflight: **89 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model ×
-  NPU/GPU/CPU combination and the four Phase 3 scenario graphs;
+  NPU/GPU/CPU combination and the seven Phase 3 scenario graphs;
 - network-blocked self-test: **11 PASS, 0 FAIL**;
 - unit tests: **25 PASS, 0 FAIL**.
 
@@ -177,37 +178,58 @@ not use a camera or network. On this machine the measured cache-cold startup was
 Run any vertical explicitly with:
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail      --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario metro      --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario health     --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario federal    --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail        --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario metro        --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario manufacturing --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario robotics      --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario education     --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario health       --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario federal      --mode spread --density 1 --fullscreen
 ```
 
-The four graphs are:
+The seven graphs are:
 
 | Key | Scenario | Video | Measured stage story |
 |---:|---|---|---|
-| `1` | Retail | `store-aisle-detection.mp4` | YOLO11n detection on the NPU → CLIP names the item from a declared store vocabulary → shelf/zone events |
-| `2` | Metro | `smart-city-traffic-montage.mp4` | busy crosswalk/traffic-light footage → lane/zone counts (detector class is the business answer; no weak classifier) |
-| `3` | Health and Life Sciences | `one-by-one-person-detection.mp4` | person detection → pose heatmap/PAF decoding → posture/zone events |
-| `4` | Federal and Aerospace | `government-perimeter-montage.mp4` | worker-perimeter action → vehicle/plate footage → independent perimeter copies → person/plate detection → IoU tracks/plate events |
+| `1` | Retail | `retail-checkout.mp4` | `product-detection-0001` on the NPU → CLIP names the item from a declared store vocabulary on the GPU → shelf/zone events on the CPU |
+| `2` | Metro | `smart-city-traffic-montage.mp4` | crossroad-1016 vehicle/pedestrian detection on the NPU → lane/zone counts on the CPU (detector class is the business answer; no weak classifier) |
+| `3` | Manufacturing | `store-aisle-detection.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → zone-occupancy counting on the CPU |
+| `4` | Robotics | `one-by-one-person-detection.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → approach-zone breach events on the CPU |
+| `5` | Education | `face-demographics-walking.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
+| `6` | Health and Life Sciences | `medical-eldercare.mp4` | person detection on the GPU → pose heatmap/PAF decoding on the NPU → posture/zone events on the CPU |
+| `7` | Federal and Aerospace | `gov-vehicle-entry.mp4` | person/vehicle/plate detection across NPU and GPU → independent perimeter copies → IoU tracks and plate events on the CPU |
 
-The initial `spread` assignment is explicit and visible in each tile. Retail, metro, and pose
-work use the NPU where the measured graph calls for it; the health person detector is explicitly
-GPU-preferred because the local NPU output for that OMZ detector was not useful for the event
-overlay, while its pose stage remains on the NPU. The operator overlay always reports the actual
+The initial `spread` assignment is explicit and visible in each tile. Detection and pose work use
+the NPU where the measured graph calls for it. `person-detection-retail-0013` is explicitly
+GPU-preferred everywhere it appears (health, federal, manufacturing, robotics, education) because
+it was measured returning **zero detections on the NPU** on this footage regardless of cache
+state, while its pose stage remains on the NPU. The operator overlay always reports the actual
 `EXECUTION_DEVICES`; the requested preference is never presented as proof.
 
 ### Open Edge Platform suite alignment
 
-The four verticals follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy:
+The seven verticals follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy:
 
-| OEP suite | Scenario id | What it shows |
-|---|---|---|
-| Retail | `retail` | Shelf-side product detection and naming on the store footage |
-| Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage |
-| Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage |
-| Federal and Aerospace | `federal` | Multi-stream perimeter detection and plate tracking on the entry footage |
+| OEP suite | Scenario id | What it shows | Measured density |
+|---|---|---|---|
+| Retail | `retail` | Shelf-side product detection and naming on the store footage | 0.83 det/frame, 17 tracks |
+| Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage | 34.7 det/frame, 530 tracks |
+| Manufacturing | `manufacturing` | People-and-vehicles aisle detection, worker presence, zone occupancy | 4.41 det/frame, 27 tracks |
+| Robotics | `robotics` | Human-approach detection and zone-breach events | 1.65 det/frame, 4 tracks |
+| Education | `education` | Presence detection plus on-device pose for posture/attendance | 0.88 det/frame, 6 tracks |
+| Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage | 2.47 det/frame, 22 tracks |
+| Federal and Aerospace | `federal` | Multi-stream perimeter detection and plate tracking on the entry footage | 8.79 det/frame, 317 tracks |
+
+Density is mean raw detections per frame over a 20–30 s `tools\review_sessions.py` run, with the
+frame and track counts in the table coming from those runs' `summary.json`. Metro is dense because
+the traffic montage is a busy multi-vehicle scene; retail is sparse in box count but is the suite
+that *names* what it finds, which is the point of that tile.
+
+The three newly added suites are real but visibly sparser than metro and federal, because the
+footage available for them contains fewer detectable subjects. Manufacturing is dense enough to
+carry a booth tile on its own; robotics and education show one to four subjects at a time, and
+robotics in particular has quiet stretches where the frame is briefly empty. This is stated here
+rather than hidden: no throughput or detection figure in this demo is inflated to cover it.
 
 ### Live failover controls
 
@@ -220,7 +242,7 @@ the stage tiles continue to show the measured execution devices.
 ### Attract and unattended run
 
 Attract mode hides the gauges, shows a large vertical headline, cycles deterministically through
-all four scenarios, and continues processing/telemetry in the background. Any key returns to the
+all seven scenarios, and continues processing/telemetry in the background. Any key returns to the
 measured demo page.
 
 ```cmd
@@ -343,5 +365,5 @@ screenshots, OCRs, or shells out to Task Manager.
 
 The strict Phase 2 density-8 relation is still not claimed as a pass. The complete evidence and
 numbers are in `bench_report.md`; Phase 3 does not hide or reinterpret that result. Phase 3 long-run
-acceptance concerns the four scenario durations, density-4 operation, attract-mode stability, and
+acceptance concerns the seven scenario durations, density-4 operation, attract-mode stability, and
 RSS criterion, while retaining the same honest metric definitions.

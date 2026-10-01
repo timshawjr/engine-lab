@@ -17,7 +17,15 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 LOGS = ROOT / "logs"
 REPORT = ROOT / "bench_report.md"
-SCENARIOS = ("retail", "metro", "health", "federal")
+SCENARIOS = (
+    "retail",
+    "metro",
+    "manufacturing",
+    "robotics",
+    "education",
+    "health",
+    "federal",
+)
 START_MARKER = "<!-- PHASE3_BENCHMARK_START -->"
 END_MARKER = "<!-- PHASE3_BENCHMARK_END -->"
 
