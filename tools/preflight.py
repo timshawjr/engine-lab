@@ -796,15 +796,15 @@ def _phase3_delivery_checks(report: Preflight) -> None:
     )
 
     launcher = (ROOT / "run_demo.bat").read_text(encoding="utf-8").lower()
-    launcher_ok = all(
-        token in launcher for token in ("pythonw.exe", "--fullscreen", "--scenario retail")
-    )
+    # The launcher starts windowed so an operator can reposition it; F11 toggles
+    # fullscreen from inside the app, so --fullscreen is no longer required here.
+    launcher_ok = all(token in launcher for token in ("pythonw.exe", "--scenario retail"))
     report.add(
         "phase 3 delivery",
         "one-click launcher",
         "PASS" if launcher_ok else "FAIL",
-        f"pythonw/fullscreen/default-scenario tokens present={launcher_ok}",
-        "Keep run_demo.bat as the no-console fullscreen entry point",
+        f"pythonw/default-scenario tokens present={launcher_ok}",
+        "Keep run_demo.bat as the no-console entry point (windowed; F11 goes fullscreen)",
     )
 
     benchmark = ROOT / "tools" / "benchmark_matrix.py"
