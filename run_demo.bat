@@ -7,5 +7,5 @@ if not exist ".venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "Engine Lab" ".venv\Scripts\pythonw.exe" -m app.main --source loop --scenario retail --mode spread --density 1 --fullscreen %*
+start "Engine Lab" ".venv\Scripts\pythonw.exe" -m app.main --source loop --scenario retail --mode spread --density 1 %*
 exit /b 0
