@@ -60,7 +60,6 @@ class CompiledModelStore:
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._core = ov.Core()
-        self._core.set_property({"CACHE_DIR": str(self.cache_dir)})
         self._model = self._core.read_model(str(model_path))
         self._input_spec = inspect_model_input(self._model)
         self._model_height = self._input_spec.height
@@ -100,9 +99,20 @@ class CompiledModelStore:
             if cached is not None:
                 return cached
             config: dict[str, Any] = {
-                "CACHE_DIR": str(self.cache_dir),
                 "PERFORMANCE_HINT": compile_config.performance_hint,
             }
+            # The GPU blob save/reload round-trip is lossy on this platform:
+            # measured on crossroad-1016, a fresh GPU compile reports 52
+            # detections over 5 gov-entry frames (max conf 0.959) while
+            # reloading the blob it just wrote reports 5 (max conf 0.443).
+            # CPU and NPU round-trips are lossless (52 in every mode), so the
+            # cache stays enabled for those devices and GPU compiles run
+            # without one.
+            effective_cache_dir = str(self.cache_dir)
+            if device == "GPU":
+                effective_cache_dir = ""
+            else:
+                config["CACHE_DIR"] = effective_cache_dir
             cpu_num_streams: int | None = None
             if device == "CPU":
                 physical_cores = psutil.cpu_count(logical=False) or 1
@@ -148,7 +158,7 @@ class CompiledModelStore:
                 compile_ms=compile_ms,
                 model_input_shape=self._model_input_shape,
                 device_gops=device_gops,
-                cache_dir=str(self.cache_dir),
+                cache_dir=effective_cache_dir,
                 performance_hint=config["PERFORMANCE_HINT"],
                 cpu_num_streams=cpu_num_streams,
                 input_layout=self._input_spec.layout,
