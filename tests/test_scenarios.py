@@ -117,17 +117,18 @@ class ScenarioCatalogTests(unittest.TestCase):
         )
 
     def test_retail_names_products_from_a_declared_vocabulary(self) -> None:
-        """Retail detects on COCO and names with CLIP, not ImageNet.
+        """Retail detects real products and refines with CLIP, not ImageNet.
 
-        The store-aisle footage is what this scenario is measured on: YOLO11n
-        reports a container class such as ``bowl``, and CLIP independently names
-        the crop against the declared grocery vocabulary (``bananas``, ``apple``,
-        ...), which is what the image actually shows. The vocabulary is the
-        contract, so only declared names can reach the overlay.
+        The checkout footage is what this scenario is measured on:
+        product-detection-0001 names the actual SKUs (``ruffles``, ``mtn_dew``,
+        ...) that the COCO detector could only approximate (``apple``,
+        ``suitcase``, ``oven``). CLIP then refines each product crop against
+        the declared category vocabulary. The vocabulary is the contract, so
+        only declared names can reach the overlay.
         """
         stages = {stage.stage: stage for stage in self.catalog["retail"].stages}
         self.assertIn("detector", stages)
-        self.assertEqual(stages["detector"].model_id, "yolo11n-fp16")
+        self.assertEqual(stages["detector"].model_id, "product-detection-0001")
         self.assertIn("product_classifier", stages)
         self.assertEqual(
             stages["product_classifier"].model_id, "clip-vision-patch32"
@@ -139,17 +140,18 @@ class ScenarioCatalogTests(unittest.TestCase):
         # person is a real shelf signal but must never be refined as a product.
         self.assertNotIn("person", rules["classify_detector_labels"])
         self.assertNotIn("person", rules["business_event_labels"])
-        # Both gates carry the raw COCO label, so they admit the product
-        # classes the checkout footage actually yields (apple, banana,
-        # suitcase for the chip bag, cake/sandwich for the loaf, plus the
-        # container classes). Kitchenware words are vocabulary names, never
-        # detector labels, and must not remain in the event rules.
-        for product in ("apple", "banana", "suitcase", "cake", "sandwich", "bottle"):
+        # Both gates carry the product-detection labels, so they admit exactly
+        # the SKUs the detector can name. COCO names and the background/undefined
+        # classes must not remain in the event rules.
+        for product in ("ruffles", "mtn_dew", "best_foods", "sprite", "pringles"):
             self.assertIn(product, rules["classify_detector_labels"])
             self.assertIn(product, rules["business_event_labels"])
-        for kitchenware in ("pot", "mixing bowl", "storage container"):
-            self.assertNotIn(kitchenware, rules["classify_detector_labels"])
-            self.assertNotIn(kitchenware, rules["business_event_labels"])
+        for coco_name in ("apple", "banana", "suitcase", "oven", "bowl"):
+            self.assertNotIn(coco_name, rules["classify_detector_labels"])
+            self.assertNotIn(coco_name, rules["business_event_labels"])
+        for excluded in ("background_label", "undefined"):
+            self.assertNotIn(excluded, rules["classify_detector_labels"])
+            self.assertNotIn(excluded, rules["business_event_labels"])
         # No sampling: the fast pipeline runs every frame at source rate.
         self.assertNotIn("detector_cadence", rules)
 

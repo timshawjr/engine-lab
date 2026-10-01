@@ -5,12 +5,12 @@
       "id": "retail",
       "title": "Retail / Shelf Monitoring",
       "vertical": "Retail / shelf analytics",
-      "business_line": "Shelf-side retail monitoring: find the item, name it from a declared store vocabulary, log the event — all on one SoC.",
+      "business_line": "Shelf-side retail monitoring: find the item, name the product on-device, refine it against a declared store vocabulary, log the event — all on one SoC.",
       "video_id": "retail_checkout",
       "stages": [
         {
           "stage": "detector",
-          "model_id": "yolo11n-fp16",
+          "model_id": "product-detection-0001",
           "device_pref": "NPU"
         },
         {
@@ -21,7 +21,7 @@
         },
         {
           "stage": "zone_event",
-          "model_id": "yolo11n-fp16",
+          "model_id": "product-detection-0001",
           "device_pref": "CPU"
         }
       ],
@@ -75,35 +75,39 @@
         "classify_min_frames": 3,
         "classify_min_crop_px": 40,
         "classify_detector_labels": [
-          "bowl",
-          "cup",
-          "bottle",
-          "wine glass",
-          "vase",
-          "apple",
-          "banana",
-          "suitcase",
-          "cake",
-          "sandwich"
+          "sprite",
+          "kool-aid",
+          "extra",
+          "ocelo",
+          "finish",
+          "mtn_dew",
+          "best_foods",
+          "gatorade",
+          "heinz",
+          "ruffles",
+          "pringles",
+          "del_monte"
         ],
         "business_event_labels": [
-          "bowl",
-          "cup",
-          "bottle",
-          "wine glass",
-          "vase",
-          "apple",
-          "banana",
-          "suitcase",
-          "cake",
-          "sandwich"
+          "sprite",
+          "kool-aid",
+          "extra",
+          "ocelo",
+          "finish",
+          "mtn_dew",
+          "best_foods",
+          "gatorade",
+          "heinz",
+          "ruffles",
+          "pringles",
+          "del_monte"
         ]
       },
       "ticker": [
         "Find the item on the shelf",
-        "Name it from the declared store vocabulary",
-        "Log the retail event on-device",
-        "One SoC, three explicit engines"
+        "Name the product on-device",
+        "Refine it against the declared store vocabulary",
+        "Log the retail event on-device"
       ]
     },
     {
