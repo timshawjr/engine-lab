@@ -325,8 +325,13 @@ class ScenarioCatalogTests(unittest.TestCase):
                 0,
             )
         }
-        self.assertEqual(assignments["perimeter_detector"].requested_device, "NPU")
-        self.assertEqual(assignments["vehicle_detector"].requested_device, "GPU")
+        # person-detection-retail-0013 detects nothing on the NPU (0 detections
+        # over 499 frames in review; CPU/GPU both give 66), so the person
+        # model moved to GPU and crossroad-1016 — measured at 303 detections
+        # over 40 frames on the NPU — took the NPU slot. gov_defense still
+        # declares a stage on each of NPU, GPU and CPU.
+        self.assertEqual(assignments["perimeter_detector"].requested_device, "GPU")
+        self.assertEqual(assignments["vehicle_detector"].requested_device, "NPU")
         self.assertEqual(assignments["plate_detector"].requested_device, "GPU")
         policy.toggle_gpu()
         assignments = {

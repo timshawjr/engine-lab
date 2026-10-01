@@ -266,12 +266,12 @@
         {
           "stage": "perimeter_detector",
           "model_id": "person-detection-retail-0013",
-          "device_pref": "NPU"
+          "device_pref": "GPU"
         },
         {
           "stage": "vehicle_detector",
           "model_id": "person-vehicle-bike-detection-crossroad-1016",
-          "device_pref": "GPU"
+          "device_pref": "NPU"
         },
         {
           "stage": "plate_detector",
