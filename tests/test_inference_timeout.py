@@ -1,6 +1,6 @@
 """Tests for the synchronous inference path in OpenVINOSingleRunner.
 
-The gov_defense hang was a GIL deadlock, not a slow inference. ``AsyncInferQueue`` routes
+The federal hang was a GIL deadlock, not a slow inference. ``AsyncInferQueue`` routes
 every call through OpenVINO's *Python* data_dispatcher wrapper, which holds the GIL while it
 works. With several streams calling it at once the contention was severe enough that a sibling
 thread could not run a plain numpy call: the captured hang showed three workers blocked inside

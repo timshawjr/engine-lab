@@ -1,7 +1,7 @@
 """Capture the app's own thread stacks when the UI thread stops being serviced.
 
 A Windows "Application Hang" kills the process without a Python traceback, so a reproducible
-gov_defense hang left no evidence at all - only an Application Hang event in the Windows event
+federal hang left no evidence at all - only an Application Hang event in the Windows event
 log. This module makes the app record where it was stuck *before* Windows closes it:
 
 * ``faulthandler`` is enabled against the session log, so a hard crash (for example a segfault

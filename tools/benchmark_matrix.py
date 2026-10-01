@@ -17,7 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 LOGS = ROOT / "logs"
 REPORT = ROOT / "bench_report.md"
-SCENARIOS = ("retail", "smart_city", "medical", "gov_defense")
+SCENARIOS = ("retail", "metro", "health", "federal")
 START_MARKER = "<!-- PHASE3_BENCHMARK_START -->"
 END_MARKER = "<!-- PHASE3_BENCHMARK_END -->"
 

@@ -68,7 +68,7 @@ from app.theme import THEME
 
 
 LOGGER = logging.getLogger("engine_lab")
-SCENARIO_ORDER = ("retail", "smart_city", "medical", "gov_defense")
+SCENARIO_ORDER = ("retail", "metro", "health", "federal")
 POSE_SKELETON = (
     (1, 2),
     (1, 5),
@@ -2001,11 +2001,11 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_1:
             self.switch_scenario("retail")
         elif key == Qt.Key.Key_2:
-            self.switch_scenario("smart_city")
+            self.switch_scenario("metro")
         elif key == Qt.Key.Key_3:
-            self.switch_scenario("medical")
+            self.switch_scenario("health")
         elif key == Qt.Key.Key_4:
-            self.switch_scenario("gov_defense")
+            self.switch_scenario("federal")
         elif key == Qt.Key.Key_N:
             self.toggle_npu()
         elif key == Qt.Key.Key_G:

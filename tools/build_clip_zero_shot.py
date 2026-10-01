@@ -26,7 +26,7 @@ Run it with a throwaway environment, not the app venv:
     <dev-venv>\\Scripts\\pip install torch transformers numpy pillow
     <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py --out models/clip-vision-patch32
     <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py --out models/clip-vision-patch32 --scenario retail
-    <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py --out models/clip-vision-patch32 --scenario smart_city
+    <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py --out models/clip-vision-patch32 --scenario metro
 
 Then convert the ONNX to IR with the app venv:
 

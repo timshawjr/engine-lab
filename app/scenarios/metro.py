@@ -1,4 +1,4 @@
-"""Smart-city classification and counting helpers."""
+"""Metro classification and counting helpers."""
 
 from __future__ import annotations
 

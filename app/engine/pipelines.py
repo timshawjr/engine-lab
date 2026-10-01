@@ -44,7 +44,7 @@ from app.engine.stages import (
     preprocess_omz_image,
     preprocess_yolo,
 )
-from app.scenarios.medical import confident_pose_angle
+from app.scenarios.health import confident_pose_angle
 from app.scenarios.retail import classification_allowed, classification_candidates
 from app.telemetry.npu_fallback import NpuDutyCycle
 
@@ -411,7 +411,7 @@ def _stage_target(
                 return "NPU", "GPU"
             return "CPU", "GPU"
         return stage.device_pref, stage.device_pref
-    if scenario.id == "gov_defense" and stage.device_pref == "GPU" and policy.gpu_enabled:
+    if scenario.id == "federal" and stage.device_pref == "GPU" and policy.gpu_enabled:
         return "GPU", "GPU"
     requested = policy.device_for_stream(stream_index, stage.device_pref)
     return requested, requested

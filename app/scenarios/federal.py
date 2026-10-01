@@ -1,4 +1,4 @@
-"""Government/defense perimeter helpers."""
+"""Federal and Aerospace perimeter helpers."""
 
 from __future__ import annotations
 

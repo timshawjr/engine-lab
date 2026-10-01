@@ -663,7 +663,7 @@ def _phase3_scenario_checks(
 ) -> None:
     from app.engine.pipelines import ScenarioModelRegistry, load_scenario_catalog
 
-    expected_ids = ("retail", "smart_city", "medical", "gov_defense")
+    expected_ids = ("retail", "metro", "health", "federal")
     try:
         catalog = load_scenario_catalog(
             ROOT / "config" / "scenarios.json",
@@ -688,7 +688,7 @@ def _phase3_scenario_checks(
             "ordered scenario catalog",
             "FAIL",
             f"expected {expected_ids}, found {actual_ids}",
-            "Restore deterministic scenario order retail, smart_city, medical, gov_defense",
+            "Restore deterministic scenario order retail, metro, health, federal",
         )
     for scenario in catalog.values():
         fallback_devices: list[str] = []
@@ -700,9 +700,9 @@ def _phase3_scenario_checks(
                 raise ValueError("event rules and ticker copy are required")
             required_rules = {
                 "retail": {"confidence_min", "iou_threshold", "picked_up_dwell_s"},
-                "smart_city": {"confidence_min", "count_dwell_s"},
-                "medical": {"confidence_min", "fall_angle_deg", "posture_dwell_s"},
-                "gov_defense": {"confidence_min", "plate_confidence_min"},
+                "metro": {"confidence_min", "count_dwell_s"},
+                "health": {"confidence_min", "fall_angle_deg", "posture_dwell_s"},
+                "federal": {"confidence_min", "plate_confidence_min"},
             }[scenario.id]
             missing_rules = sorted(required_rules - set(scenario.event_rules))
             if missing_rules:
@@ -782,8 +782,8 @@ def _phase3_delivery_checks(report: Preflight) -> None:
         "pre-show checklist",
         "task manager cross-check",
         "npu compiled yesterday but not today",
-        "smart_city",
-        "gov_defense",
+        "metro",
+        "federal",
         "attract",
     )
     runbook_ok = all(term in readme for term in required_runbook_terms)

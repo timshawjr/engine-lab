@@ -99,7 +99,7 @@ class EventTrackerTests(unittest.TestCase):
         """
 
         size = (768, 432)
-        tracker = EventTracker(self.catalog["smart_city"], 1)
+        tracker = EventTracker(self.catalog["metro"], 1)
         # centre (650, 380) -> (0.846, 0.880): inside outgoing_lane [0.0, 0.75, 1.0, 0.25]
         vehicle = Detection(600, 310, 700, 450, "vehicle", 0.9)
         emitted = 0
@@ -168,7 +168,7 @@ class EventTrackerTests(unittest.TestCase):
         """
 
         size = (768, 432)
-        tracker = EventTracker(self.catalog["smart_city"], 1)
+        tracker = EventTracker(self.catalog["metro"], 1)
         # centre (380, 210) -> (0.495, 0.486): inside the crosswalk band [0.0, 0.3, 1.0, 0.5]
         person = Detection(330, 80, 430, 340, "person", 0.9)
         tracker.update((person,), now=200.0, source_size=size)
@@ -183,20 +183,20 @@ class EventTrackerTests(unittest.TestCase):
     def test_zone_membership_needs_a_source_size(self) -> None:
         """Without a frame size the tracker must not claim a zone hit."""
 
-        tracker = EventTracker(self.catalog["smart_city"], 1)
+        tracker = EventTracker(self.catalog["metro"], 1)
         person = Detection(330, 80, 430, 340, "person", 0.9)
         tracker.update((person,), now=200.0)
         _, events = tracker.update((person,), now=200.5)
         self.assertNotIn("person_counted", {event.type for event in events})
 
     def test_plate_event(self) -> None:
-        tracker = EventTracker(self.catalog["gov_defense"], 2)
+        tracker = EventTracker(self.catalog["federal"], 2)
         plate = Detection(0.4, 0.4, 0.6, 0.6, "license plate", 0.9)
         _, events = tracker.update((plate,), now=300.0, source_size=SOURCE_SIZE)
         self.assertIn("plate_detected", {event.type for event in events})
 
     def test_medical_posture_alert_respects_dwell(self) -> None:
-        tracker = EventTracker(self.catalog["medical"], 0)
+        tracker = EventTracker(self.catalog["health"], 0)
         person = Detection(0.3, 0.2, 0.7, 0.9, "person", 0.9)
         keypoints = (
             Keypoint("left_shoulder", 0.3, 0.4, 0.9),

@@ -33,7 +33,7 @@ REQUIRED_CONFIG = ROOT / "config" / "models.json"
 REQUIRED_PROFILES = ROOT / "config" / "platform_profiles.json"
 REQUIRED_SCENARIOS = ROOT / "config" / "scenarios.json"
 TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
-SCENARIO_IDS = ("retail", "smart_city", "medical", "gov_defense")
+SCENARIO_IDS = ("retail", "metro", "health", "federal")
 
 LOGGER = logging.getLogger("engine_lab")
 

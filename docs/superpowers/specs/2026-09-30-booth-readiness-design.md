@@ -1,5 +1,7 @@
 # Booth-readiness rework — design
 
+> **Superseded naming:** This design was written under the original scenario ids. The four verticals have since been renamed to follow the Open Edge Platform suite taxonomy: `smart_city` → `metro`, `medical` → `health`, `gov_defense` → `federal`. The `retail` scenario is unchanged. The analysis and decisions described here were actually made under the old names; this note is added for traceability and the design's history is intentionally left as written.
+
 Date: 2026-09-30
 Status: design approved in conversation; awaiting spec review
 Branch: `fix/verticals` (builds on `fix/demo-killers`)

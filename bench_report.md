@@ -1,5 +1,7 @@
 # Engine Lab benchmark report
 
+> **Note on naming:** The four verticals now follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy. The historical names used throughout this report map as follows: `smart_city` → `metro`, `medical` → `health`, `gov_defense` → `federal`. The `retail` scenario is unchanged. All measurements were taken under the old names; the rename is naming/copy only and does not affect any recorded result.
+
 ## Phase 0 — machine setup and verification
 
 - **Run date:** 2026-09-24 after driver reboot

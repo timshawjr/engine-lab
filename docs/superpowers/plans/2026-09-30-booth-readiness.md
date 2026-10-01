@@ -1,5 +1,7 @@
 # Booth-Readiness Implementation Plan
 
+> **Superseded naming:** This plan was written under the original scenario ids. The four verticals have since been renamed to follow the Open Edge Platform suite taxonomy: `smart_city` → `metro`, `medical` → `health`, `gov_defense` → `federal`. The `retail` scenario is unchanged. The work described here was actually done under the old names; this note is added for traceability and the plan's history is intentionally left as written.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Engine Lab read as a sales demo on a 16:9 1080p display, with every vertical visibly exercising NPU + GPU + CPU and a legible task label per stage.

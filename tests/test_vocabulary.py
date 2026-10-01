@@ -30,8 +30,8 @@ class VocabularyDeclarationTests(unittest.TestCase):
         for kitchenware in ("pot", "mixing bowl", "storage container"):
             self.assertNotIn(kitchenware, labels)
 
-    def test_smart_city_vocabulary_names_road_users(self):
-        labels = set(VOCABULARIES["smart_city"])
+    def test_metro_vocabulary_names_road_users(self):
+        labels = set(VOCABULARIES["metro"])
         self.assertIn("car", labels)
         self.assertIn("person", labels)
         self.assertNotIn("mixing bowl", labels)
@@ -97,10 +97,10 @@ class ZeroShotVocabularyLoadingTests(unittest.TestCase):
     def test_half_missing_named_pair_falls_back(self):
         """A named index without its embeddings must not half-load."""
 
-        self._write_pair("smart_city", ("car", "bus"))
-        (self.directory / "text_embeddings_smart_city.npy").unlink()
+        self._write_pair("metro", ("car", "bus"))
+        (self.directory / "text_embeddings_metro.npy").unlink()
         _embeddings, labels, _counts = load_zero_shot_vocabulary(
-            self.path, name="smart_city"
+            self.path, name="metro"
         )
         self.assertEqual(labels, self.DEFAULT_LABELS)
 
@@ -121,7 +121,7 @@ class ScenarioVocabularyWiringTests(unittest.TestCase):
             for stage in scenario.stages
             if stage.model_id == "clip-vision-patch32"
         }
-        self.assertEqual(declared, {"retail", "smart_city"})
+        self.assertEqual(declared, {"retail", "metro"})
         for name in declared:
             self.assertIn(name, VOCABULARIES)
 

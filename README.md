@@ -80,7 +80,7 @@ without changing the production dependency set:
 $env:PYTHONPATH = "C:\Users\Intel Demo\AppData\Local\Temp\opencode\engine-lab-review-deps"
 $env:QT_QPA_PLATFORM = "offscreen"
 .venv\Scripts\python.exe tools\review_sessions.py --scenario retail --seconds 60 --output logs\review-retail
-.venv\Scripts\python.exe tools\review_sessions.py --scenario medical --seconds 60 --output logs\review-medical
+.venv\Scripts\python.exe tools\review_sessions.py --scenario health --seconds 60 --output logs\review-health
 Remove-Item Env:PYTHONPATH
 Remove-Item Env:QT_QPA_PLATFORM
 ```
@@ -123,13 +123,13 @@ Rebuild with:
 
 ```cmd
 <dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario retail
-<dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario smart_city
+<dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario metro
 .venv\Scripts\python tools\convert_clip_onnx.py --fp16
 ```
 
 Each vertical that uses CLIP declares its vocabulary by name on the
 `product_classifier` stage in `config/scenarios.json` (`"vocabulary": "retail"`,
-`"vocabulary": "smart_city"`), and `--scenario <name>` bakes that vocabulary's
+`"vocabulary": "metro"`), and `--scenario <name>` bakes that vocabulary's
 pair (`text_embeddings_<name>.npy` + `vocabulary_<name>.json`) into the CLIP
 model directory. A plain run with no `--scenario` rewrites the default pair
 (`text_embeddings.npy` + `vocabulary.json`), which is the fallback when a
@@ -178,25 +178,36 @@ Run any vertical explicitly with:
 
 ```cmd
 .venv\Scripts\python.exe -m app.main --source loop --scenario retail      --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario smart_city  --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario medical      --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario gov_defense --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario metro      --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario health     --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario federal    --mode spread --density 1 --fullscreen
 ```
 
 The four graphs are:
 
 | Key | Scenario | Video | Measured stage story |
 |---:|---|---|---|
-| `1` | Retail / Shelf Monitoring | `store-aisle-detection.mp4` | YOLO11n detection on the NPU → CLIP names the item from a declared store vocabulary → shelf/zone events |
-| `2` | Smart city / traffic | `smart-city-traffic-montage.mp4` | busy crosswalk/traffic-light footage → lane/zone counts (detector class is the business answer; no weak classifier) |
-| `3` | Medical / eldercare | `one-by-one-person-detection.mp4` | person detection → pose heatmap/PAF decoding → posture/zone events |
-| `4` | Government / defense | `government-perimeter-montage.mp4` | worker-perimeter action → vehicle/plate footage → independent perimeter copies → person/plate detection → IoU tracks/plate events |
+| `1` | Retail | `store-aisle-detection.mp4` | YOLO11n detection on the NPU → CLIP names the item from a declared store vocabulary → shelf/zone events |
+| `2` | Metro | `smart-city-traffic-montage.mp4` | busy crosswalk/traffic-light footage → lane/zone counts (detector class is the business answer; no weak classifier) |
+| `3` | Health and Life Sciences | `one-by-one-person-detection.mp4` | person detection → pose heatmap/PAF decoding → posture/zone events |
+| `4` | Federal and Aerospace | `government-perimeter-montage.mp4` | worker-perimeter action → vehicle/plate footage → independent perimeter copies → person/plate detection → IoU tracks/plate events |
 
-The initial `spread` assignment is explicit and visible in each tile. Retail, smart-city, and pose
-work use the NPU where the measured graph calls for it; the medical person detector is explicitly
+The initial `spread` assignment is explicit and visible in each tile. Retail, metro, and pose
+work use the NPU where the measured graph calls for it; the health person detector is explicitly
 GPU-preferred because the local NPU output for that OMZ detector was not useful for the event
 overlay, while its pose stage remains on the NPU. The operator overlay always reports the actual
 `EXECUTION_DEVICES`; the requested preference is never presented as proof.
+
+### Open Edge Platform suite alignment
+
+The four verticals follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy:
+
+| OEP suite | Scenario id | What it shows |
+|---|---|---|
+| Retail | `retail` | Shelf-side product detection and naming on the store footage |
+| Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage |
+| Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage |
+| Federal and Aerospace | `federal` | Multi-stream perimeter detection and plate tracking on the entry footage |
 
 ### Live failover controls
 
@@ -240,7 +251,7 @@ The deterministic loop is the default. A camera is never used unless explicitly 
 
 | Key | Action |
 |---|---|
-| `1`–`4` | Select retail, smart city, medical, or government/defense |
+| `1`–`4` | Select retail, metro, health and life sciences, or federal and aerospace |
 | `N` | Toggle the NPU; the next inference request uses the reduced device set |
 | `G` | Toggle the GPU |
 | `C` | Cycle `auto → spread → npu_only → gpu_only → cpu_only → split` |

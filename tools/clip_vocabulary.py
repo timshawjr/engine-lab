@@ -65,7 +65,7 @@ VOCABULARIES: dict[str, dict[str, tuple[str, ...]]] = {
             "a bag of corn chips",
         ),
     },
-    "smart_city": {
+    "metro": {
         # The intersection clip is a top-down view, so each category carries one
         # overhead phrasing alongside a plain one. Measured on the vehicle crops
         # this footage actually yields, either phrasing reads the cars as car

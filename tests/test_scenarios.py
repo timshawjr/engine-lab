@@ -27,7 +27,7 @@ class ScenarioCatalogTests(unittest.TestCase):
     def test_exact_four_scenario_order(self) -> None:
         self.assertEqual(
             tuple(scenario.id for scenario in self.catalog.values()),
-            ("retail", "smart_city", "medical", "gov_defense"),
+            ("retail", "metro", "health", "federal"),
         )
 
     def test_every_model_has_a_task_label(self) -> None:
@@ -155,8 +155,8 @@ class ScenarioCatalogTests(unittest.TestCase):
         # No sampling: the fast pipeline runs every frame at source rate.
         self.assertNotIn("detector_cadence", rules)
 
-    def test_smart_city_types_vehicles_with_clip_not_imagenet(self) -> None:
-        """Smart city names vehicle crops with CLIP, not a weak ImageNet top-1.
+    def test_metro_types_vehicles_with_clip_not_imagenet(self) -> None:
+        """Metro names vehicle crops with CLIP, not a weak ImageNet top-1.
 
         The crossroad detector already answers the counting question, and an
         ImageNet top-1 over a vehicle crop was only ever a weak candidate
@@ -164,32 +164,32 @@ class ScenarioCatalogTests(unittest.TestCase):
         zero-shot ``product_classifier`` that names a vehicle crop against a
         declared vocabulary, so the ImageNet-only fields stay absent.
         """
-        stages = {stage.stage for stage in self.catalog["smart_city"].stages}
+        stages = {stage.stage for stage in self.catalog["metro"].stages}
         self.assertNotIn("classifier", stages)
         self.assertIn("product_classifier", stages)
         classifier = next(
             stage
-            for stage in self.catalog["smart_city"].stages
+            for stage in self.catalog["metro"].stages
             if stage.stage == "product_classifier"
         )
         self.assertEqual(classifier.model_id, "clip-vision-patch32")
         self.assertEqual(classifier.device_pref, "GPU")
-        rules = self.catalog["smart_city"].event_rules
+        rules = self.catalog["metro"].event_rules
         for removed in ("classify_output_labels", "classification_min"):
             self.assertNotIn(removed, rules)
         # The montage's crosswalks are full of pedestrians, and the declared
-        # smart_city vocabulary carries a "person" entry, so person crops are
+        # metro vocabulary carries a "person" entry, so person crops are
         # named too; vehicle crops remain the counting answer.
         self.assertEqual(rules["classify_detector_labels"], ["vehicle", "person"])
-        # Retail and smart city are the two CLIP scenarios; medical and
-        # gov_defense name nothing.
+        # Retail and metro are the two CLIP scenarios; health and
+        # federal name nothing.
         self.assertEqual(
             [
                 s.id
                 for s in self.catalog.values()
                 if "product_classifier" in {x.stage for x in s.stages}
             ],
-            ["retail", "smart_city"],
+            ["retail", "metro"],
         )
 
     def test_classifier_gates_are_configured_on_every_scenario(self) -> None:
@@ -202,10 +202,10 @@ class ScenarioCatalogTests(unittest.TestCase):
             self.assertGreaterEqual(int(rules["classify_min_frames"]), 2)
             self.assertTrue(rules["classify_detector_labels"])
             # person is banned from the ImageNet classifier path in code
-            # (app/scenarios/retail.py), but smart_city runs the zero-shot CLIP
+            # (app/scenarios/retail.py), but metro runs the zero-shot CLIP
             # stage, whose declared vocabulary carries a "person" entry for the
             # montage's crosswalks.
-            if scenario.id != "smart_city":
+            if scenario.id != "metro":
                 self.assertNotIn("person", rules["classify_detector_labels"])
             self.assertIn("zero_shot_min", rules)
             self.assertGreater(float(rules["zero_shot_min"]), 0.0)
@@ -240,13 +240,13 @@ class ScenarioCatalogTests(unittest.TestCase):
     def test_npu_off_fails_npu_preferred_stage_to_gpu(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
         policy.toggle_npu()
-        medical = self.catalog["medical"]
-        medical_assignments = {
+        health = self.catalog["health"]
+        health_assignments = {
             item.stage: item
-            for item in build_stage_assignments(policy, medical, 0)
+            for item in build_stage_assignments(policy, health, 0)
         }
-        self.assertEqual(medical_assignments["pose"].requested_device, "GPU")
-        self.assertEqual(medical_assignments["pose"].intended_device, "NPU")
+        self.assertEqual(health_assignments["pose"].requested_device, "GPU")
+        self.assertEqual(health_assignments["pose"].intended_device, "NPU")
 
     def test_gpu_and_npu_off_falls_back_to_cpu(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
@@ -254,16 +254,16 @@ class ScenarioCatalogTests(unittest.TestCase):
         policy.toggle_npu()
         assignments = {
             item.stage: item
-            for item in build_stage_assignments(policy, self.catalog["medical"], 0)
+            for item in build_stage_assignments(policy, self.catalog["health"], 0)
         }
         self.assertEqual(assignments["person_detector"].requested_device, "CPU")
         self.assertEqual(assignments["pose"].requested_device, "CPU")
 
     def test_split_and_disabled_preference_fallback(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPLIT)
-        medical = self.catalog["medical"]
+        health = self.catalog["health"]
         assignments = {
-            item.stage: item for item in build_stage_assignments(policy, medical, 0)
+            item.stage: item for item in build_stage_assignments(policy, health, 0)
         }
         # Split keeps every device on, so each stage gets its own preference.
         self.assertEqual(assignments["person_detector"].requested_device, "GPU")
@@ -272,7 +272,7 @@ class ScenarioCatalogTests(unittest.TestCase):
         # what it originally asked for.
         policy.toggle_gpu()
         assignments = {
-            item.stage: item for item in build_stage_assignments(policy, medical, 0)
+            item.stage: item for item in build_stage_assignments(policy, health, 0)
         }
         self.assertEqual(assignments["person_detector"].requested_device, "NPU")
         self.assertEqual(assignments["person_detector"].intended_device, "GPU")
@@ -291,22 +291,22 @@ class ScenarioCatalogTests(unittest.TestCase):
             item.stage: item
             for item in build_stage_assignments(
                 policy,
-                self.catalog["smart_city"],
+                self.catalog["metro"],
                 0,
                 availability=FakeAvailability(),
             )
         }
-        # smart_city's detector prefers NPU and the policy allows it, but this
+        # metro's detector prefers NPU and the policy allows it, but this
         # model cannot run there, so it must fall back and still record what it
         # originally asked for.
         self.assertEqual(assignments["detector"].intended_device, "NPU")
         self.assertNotEqual(assignments["detector"].requested_device, "NPU")
 
-    def test_medical_person_detector_prefers_gpu(self) -> None:
+    def test_health_person_detector_prefers_gpu(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
         assignments = {
             item.stage: item
-            for item in build_stage_assignments(policy, self.catalog["medical"], 0)
+            for item in build_stage_assignments(policy, self.catalog["health"], 0)
         }
         self.assertEqual(assignments["person_detector"].requested_device, "GPU")
         self.assertEqual(assignments["pose"].requested_device, "NPU")
@@ -317,7 +317,7 @@ class ScenarioCatalogTests(unittest.TestCase):
         assignments = {
             item.stage: item for item in build_stage_assignments(
                 policy,
-                self.catalog["medical"],
+                self.catalog["health"],
                 0,
             )
         }
@@ -331,14 +331,14 @@ class ScenarioCatalogTests(unittest.TestCase):
             item.stage: item
             for item in build_stage_assignments(
                 policy,
-                self.catalog["gov_defense"],
+                self.catalog["federal"],
                 0,
             )
         }
         # person-detection-retail-0013 detects nothing on the NPU (0 detections
         # over 499 frames in review; CPU/GPU both give 66), so the person
         # model moved to GPU and crossroad-1016 — measured at 303 detections
-        # over 40 frames on the NPU — took the NPU slot. gov_defense still
+        # over 40 frames on the NPU — took the NPU slot. federal still
         # declares a stage on each of NPU, GPU and CPU.
         self.assertEqual(assignments["perimeter_detector"].requested_device, "GPU")
         self.assertEqual(assignments["vehicle_detector"].requested_device, "NPU")
@@ -348,7 +348,7 @@ class ScenarioCatalogTests(unittest.TestCase):
             item.stage: item
             for item in build_stage_assignments(
                 policy,
-                self.catalog["gov_defense"],
+                self.catalog["federal"],
                 0,
             )
         }

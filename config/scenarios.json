@@ -3,8 +3,8 @@
   "scenarios": [
     {
       "id": "retail",
-      "title": "Retail / Shelf Monitoring",
-      "vertical": "Retail / shelf analytics",
+      "title": "Retail",
+      "vertical": "Retail",
       "business_line": "Shelf-side retail monitoring: find the item, name the product on-device, refine it against a declared store vocabulary, log the event — all on one SoC.",
       "video_id": "retail_checkout",
       "stages": [
@@ -111,9 +111,9 @@
       ]
     },
     {
-      "id": "smart_city",
-      "title": "Smart City / Traffic",
-      "vertical": "Intersection analytics",
+      "id": "metro",
+      "title": "Metro",
+      "vertical": "Metro",
       "business_line": "Intersection analytics at the edge: vehicle and pedestrian counting without a server.",
       "video_id": "smart_city_montage",
       "stages": [
@@ -126,7 +126,7 @@
           "stage": "product_classifier",
           "model_id": "clip-vision-patch32",
           "device_pref": "GPU",
-          "vocabulary": "smart_city"
+          "vocabulary": "metro"
         },
         {
           "stage": "zone_event",
@@ -194,9 +194,9 @@
       ]
     },
     {
-      "id": "medical",
-      "title": "Medical / Eldercare",
-      "vertical": "Patient monitoring",
+      "id": "health",
+      "title": "Health and Life Sciences",
+      "vertical": "Health and Life Sciences",
       "business_line": "Patient monitoring on-device: pose and posture tracking, with a fall alert armed — no video leaves the room.",
       "video_id": "medical_eldercare",
       "stages": [
@@ -262,9 +262,9 @@
       ]
     },
     {
-      "id": "gov_defense",
-      "title": "Government / Defense",
-      "vertical": "Perimeter analytics",
+      "id": "federal",
+      "title": "Federal and Aerospace",
+      "vertical": "Federal and Aerospace",
       "business_line": "Multi-camera perimeter on one platform: stream density is the metric, not TOPS.",
       "video_id": "gov_vehicle_entry",
       "stages": [

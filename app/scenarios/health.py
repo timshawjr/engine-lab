@@ -1,4 +1,4 @@
-"""Medical posture helpers."""
+"""Health and Life Sciences posture helpers."""
 
 from __future__ import annotations
 

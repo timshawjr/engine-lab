@@ -405,7 +405,7 @@ def run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=("retail", "smart_city", "medical", "gov_defense"), required=True)
+    parser.add_argument("--scenario", choices=("retail", "metro", "health", "federal"), required=True)
     parser.add_argument("--seconds", type=float, default=30.0)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--sample-every", type=int, default=10)
