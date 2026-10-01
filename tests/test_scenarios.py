@@ -120,8 +120,9 @@ class ScenarioCatalogTests(unittest.TestCase):
         """Retail detects on COCO and names with CLIP, not ImageNet.
 
         The store-aisle footage is what this scenario is measured on: YOLO11n
-        reports ``bowl`` on every pass, and CLIP independently names the crop
-        ``pot``, which is what the image actually shows. The vocabulary is the
+        reports a container class such as ``bowl``, and CLIP independently names
+        the crop against the declared grocery vocabulary (``bananas``, ``apple``,
+        ...), which is what the image actually shows. The vocabulary is the
         contract, so only declared names can reach the overlay.
         """
         stages = {stage.stage: stage for stage in self.catalog["retail"].stages}

@@ -146,8 +146,9 @@ does not change with the vocabulary.
    explicitly, and so is every unlisted class (on this footage YOLO also reports `oven`, `microwave`
    and `tv` - 89/21/18 raw detections in the 40 s review - and those crops stay out), so the gate
    fails closed.
-2. **Per-label business-event gate** - the declared inventory also gates `object_classified` and
-   `object_picked_up`. Without it the tracker logged `object_picked_up person`, which is not a
+2. **Per-label business-event gate** - the declared inventory gates `object_picked_up` only;
+   `object_classified` is already gated by the CLIP vocabulary and `classify_min_frames`.
+   Without it the tracker logged `object_picked_up person`, which is not a
    statement worth making, and on other footage it logged `object_picked_up microwave`.
 3. **Temporal stability** - a label must repeat for `classify_min_frames` consecutive frames on one
    track before it is displayed or emitted, and it emits once per track per label rather than once

@@ -1186,8 +1186,9 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         screen = QApplication.primaryScreen()
-        available_width = screen.availableGeometry().width() if screen is not None else THEME.design_width
-        available_height = screen.availableGeometry().height() if screen is not None else THEME.design_height
+        rect = screen.availableGeometry() if screen is not None else None
+        available_width = rect.width() if rect is not None else THEME.design_width
+        available_height = rect.height() if rect is not None else THEME.design_height
         self.compact_layout = use_compact_layout(available_width, available_height)
         self.demo_page = QWidget()
         self.attract_page = QWidget()
