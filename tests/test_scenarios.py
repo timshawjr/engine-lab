@@ -38,6 +38,31 @@ class ScenarioCatalogTests(unittest.TestCase):
             ),
         )
 
+    def test_hud_scenario_keys_match_the_catalog_order(self) -> None:
+        """Key N must select SCENARIO_ORDER[N - 1].
+
+        The HUD keeps its own copy of the scenario order, and a vertical that
+        exists in the catalog but not in the HUD would be unreachable at the
+        booth. Reordering config/scenarios.json must not silently repoint a
+        number key at the wrong vertical.
+        """
+        from PySide6.QtCore import Qt
+
+        from app.hud import SCENARIO_KEYS, SCENARIO_ORDER
+
+        self.assertEqual(
+            SCENARIO_ORDER,
+            tuple(scenario.id for scenario in self.catalog.values()),
+        )
+        self.assertEqual(len(SCENARIO_KEYS), len(SCENARIO_ORDER))
+        for offset, scenario_id in enumerate(SCENARIO_ORDER):
+            key = Qt.Key(Qt.Key.Key_1.value + offset)
+            self.assertEqual(SCENARIO_KEYS[key], scenario_id)
+            # QKeyEvent.key() may hand over a plain int; the lookup must still hit.
+            self.assertEqual(SCENARIO_KEYS[key.value], scenario_id)
+        self.assertEqual(SCENARIO_KEYS[Qt.Key.Key_3], "manufacturing")
+        self.assertEqual(SCENARIO_KEYS[Qt.Key.Key_7], "federal")
+
     def test_every_model_has_a_task_label(self) -> None:
         payload = json.loads(
             (ROOT / "config" / "models.json").read_text(encoding="utf-8")

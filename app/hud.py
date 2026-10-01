@@ -77,6 +77,12 @@ SCENARIO_ORDER = (
     "health",
     "federal",
 )
+# Number keys select scenarios by position, so adding a vertical cannot leave a key
+# pointing at the wrong scenario. Key N is SCENARIO_ORDER[N - 1].
+SCENARIO_KEYS: dict["Qt.Key", str] = {
+    Qt.Key(Qt.Key.Key_1.value + offset): scenario_id
+    for offset, scenario_id in enumerate(SCENARIO_ORDER)
+}
 POSE_SKELETON = (
     (1, 2),
     (1, 5),
@@ -1434,7 +1440,7 @@ class MainWindow(QMainWindow):
         root.addLayout(bottom_row, 0)
         bottom_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self.status_label = _label(
-            "1-7 scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
+            f"1-{len(SCENARIO_ORDER)} scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
             color=THEME.text_muted,
         )
         root.addWidget(self.status_label)
@@ -2006,20 +2012,8 @@ class MainWindow(QMainWindow):
             elif key == Qt.Key.Key_Q:
                 self.close()
             return
-        if key == Qt.Key.Key_1:
-            self.switch_scenario("retail")
-        elif key == Qt.Key.Key_2:
-            self.switch_scenario("metro")
-        elif key == Qt.Key.Key_3:
-            self.switch_scenario("manufacturing")
-        elif key == Qt.Key.Key_4:
-            self.switch_scenario("robotics")
-        elif key == Qt.Key.Key_5:
-            self.switch_scenario("education")
-        elif key == Qt.Key.Key_6:
-            self.switch_scenario("health")
-        elif key == Qt.Key.Key_7:
-            self.switch_scenario("federal")
+        if key in SCENARIO_KEYS:
+            self.switch_scenario(SCENARIO_KEYS[key])
         elif key == Qt.Key.Key_N:
             self.toggle_npu()
         elif key == Qt.Key.Key_G:
