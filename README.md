@@ -332,6 +332,13 @@ reports its new `EXECUTION_DEVICES` payload.
 
 ## What the HUD measures
 
+- **Header stat strip:** three readouts replace the old `LIVE` badge and wall clock, chosen to
+  answer three questions in order — *is it live* (`FPS`, stream 0 processing rate), *is it doing real
+  work* (`DET/s`, detections per second across all streams), and *does it produce a business answer*
+  (`EVENTS`, business events in the scenario's rolling event window). All three are the same
+  measurements the metric tiles use, so they agree exactly; the strip is simply the one that is always
+  on screen, including at density 1 where the tile grid is hidden to give the video its height. A
+  missing measurement renders as an em dash, never a zero.
 - **Engine gauges:** NPU, GPU, and CPU utilization from the declared telemetry source. PDH
   `GPU Engine` is used when available; the app-measured NPU duty-cycle fallback is explicitly
   labelled `APP`. CPU is psutil. A disabled engine is grey, reads `OFF BY OPERATOR`, and retains its

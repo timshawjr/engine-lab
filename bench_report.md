@@ -854,3 +854,34 @@ layout and running it for real.
 the seven-scenario key map, so the picture cannot silently shrink again. It
 asserts the pure function rather than instantiating `FrameCanvas`, because
 building a QWidget needs a QApplication and no other test in the suite does that.
+### Header stat strip replaces the LIVE badge and the clock
+
+The status panel's second row carried a `LIVE` badge and a wall clock. Neither told a booth visitor
+anything they could not already see, and they occupied the most valuable corner of the header. They
+are replaced by three measured readouts, ordered to answer three questions in sequence:
+
+| Position | Stat | Question it answers | Source |
+|---|---|---|---|
+| left | `FPS` | Is it live? | stream 0 processing frames/s over the rolling 10 s window |
+| centre | `DET/s` | Is it doing real work? | detections/s summed across all active streams |
+| right | `EVENTS` | Does it produce a business answer? | business events in the scenario's rolling event window |
+
+`EVENTS` is the one most demos omit. Detection counts alone only show that a model fired; the event
+count is the number a retail, transit or safety lead would actually be asked for, and it is counted on
+the CPU from tracked detections, which is what makes it a result rather than a raw inference.
+
+All three read the same values the metric tiles use, so they cannot disagree. Verified at
+`--density 2`: the header read `FPS 24.7 / DET/s 276.9 / EVENTS 50` while the tile grid read
+`REAL-TIME 24.7 FPS / DET/s 276.9 / EVENTS 50` on the same frame. At density 1 the strip is the only
+place these three appear, since the tile grid is hidden to give the video its height.
+
+A missing measurement renders as an em dash rather than a zero, because a zero reads as "measured, and
+the answer was nothing" when the truth is usually "not measured yet".
+
+Two related notes on what was removed. The `LIVE`/`ATTRACT` badge went because attract mode replaces
+the entire page, so the page itself is the indicator. The clock's timer stayed: it is the UI thread's
+C-level heartbeat for `hangwatch`, and removing the widget did not remove `mark_ui_tick()` or
+`arm_dump_later()` - only the text update went.
+
+Gates after this change: `95 tests OK` (one new typography test),
+selftest `11 PASS / 0 FAIL`, preflight `107 PASS / 0 WARN / 0 FAIL`.

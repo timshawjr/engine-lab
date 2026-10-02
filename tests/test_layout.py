@@ -78,6 +78,19 @@ class OverlayTypographyTests(unittest.TestCase):
         self.assertLess(THEME.font_overlay, THEME.font_title)
 
 
+class HeaderStatTypographyTests(unittest.TestCase):
+    def test_header_stat_value_font_is_booth_readable(self) -> None:
+        """These three readouts replaced the LIVE badge and the wall clock.
+
+        They have to be legible from a standing distance, so the value font must
+        be clearly larger than its caption and no smaller than the body font.
+        """
+        self.assertGreater(
+            THEME.header_stat_value_font, THEME.header_stat_caption_font
+        )
+        self.assertGreaterEqual(THEME.header_stat_value_font, THEME.font_regular)
+
+
 class DemoPageStructureTests(unittest.TestCase):
     def test_scenario_keys_cover_every_vertical(self) -> None:
         self.assertEqual(len(SCENARIO_ORDER), 7)

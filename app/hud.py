@@ -8,7 +8,6 @@ import logging
 import time
 from collections import deque
 from dataclasses import asdict, replace
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -872,6 +871,49 @@ class MetricTile(QFrame):
         self.value.setText(value)
 
 
+class HeaderStat(QFrame):
+    """A caption-over-value readout for the header strip.
+
+    These carry measured numbers only. A missing measurement renders as an
+    em dash rather than a zero, because a zero would read as "measured, and the
+    answer was nothing" when the truth is usually "not measured yet".
+    """
+
+    def __init__(self, caption: str, tooltip: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"background: {THEME.panel_alt}; border: 1px solid {THEME.border}; "
+            f"border-radius: {THEME.radius_small}px;"
+        )
+        if tooltip:
+            self.setToolTip(tooltip)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(
+            THEME.spacing_sm,
+            THEME.spacing_xs,
+            THEME.spacing_sm,
+            THEME.spacing_xs,
+        )
+        layout.setSpacing(0)
+        caption_label = _label(
+            caption,
+            size=THEME.header_stat_caption_font,
+            color=THEME.text_muted,
+            bold=True,
+        )
+        layout.addWidget(caption_label)
+        self.value = _label(
+            "—",
+            size=THEME.header_stat_value_font,
+            color=THEME.text,
+            bold=True,
+        )
+        layout.addWidget(self.value)
+
+    def set_value(self, value: str) -> None:
+        self.value.setText(value)
+
+
 def _short_model_name(model_id: str, stage: str = "") -> str:
     if model_id == "cpu":
         return {
@@ -1377,11 +1419,29 @@ class MainWindow(QMainWindow):
             bold=True,
         )
         status_row = QHBoxLayout()
-        self.live_badge = _label("ATTRACT" if self.attract_mode else "LIVE", bold=True)
-        self.clock_label = _label("", color=THEME.text_muted)
-        status_row.addWidget(self.live_badge)
-        status_row.addStretch(1)
-        status_row.addWidget(self.clock_label)
+        status_row.setSpacing(THEME.spacing_sm)
+        # These three replace the LIVE badge and the wall clock, which told a
+        # booth visitor nothing they could not already see. The trio is chosen
+        # to answer, in order: is it live (FPS), is it doing real work
+        # (detections/s), and does it produce a business answer (events).
+        self.fps_stat = HeaderStat(
+            "FPS",
+            "Stream 0 processing frames per second, measured over the rolling "
+            f"{THEME.metric_window_seconds:g}-second window",
+        )
+        self.detection_stat = HeaderStat(
+            "DET/s",
+            "Detections per second across all active streams, measured over the "
+            f"rolling {THEME.metric_window_seconds:g}-second window",
+        )
+        self.event_stat = HeaderStat(
+            "EVENTS",
+            "Business events in the rolling "
+            f"{float(self.scenario.event_rules['event_window_s']):g}-second window, "
+            "counted on the CPU from tracked detections",
+        )
+        for stat in (self.fps_stat, self.detection_stat, self.event_stat):
+            status_row.addWidget(stat, 1)
         self.fallback_label = _label("FALLBACK", color=THEME.danger, bold=True)
         self.fallback_label.hide()
         self.failover_label = _label("", color=THEME.warning, bold=True)
@@ -1823,7 +1883,8 @@ class MainWindow(QMainWindow):
     def set_attract_mode(self, enabled: bool) -> None:
         self.attract_mode = enabled
         self.stack.setCurrentIndex(1 if enabled else 0)
-        self.live_badge.setText("ATTRACT" if enabled else "LIVE")
+        # No LIVE/ATTRACT badge any more: attract mode replaces the whole page, so
+        # the page itself is the indicator.
         if enabled:
             self.attract_index = SCENARIO_ORDER.index(self.scenario.id)
             self.attract_timer.start()
@@ -1852,7 +1913,6 @@ class MainWindow(QMainWindow):
         # main thread is blocked in a C call that holds the GIL, which is the case that actually
         # hangs; this timer is C-level and still fires, so the stack is captured either way.
         hangwatch.arm_dump_later()
-        self.clock_label.setText(datetime.now().strftime("%H:%M:%S"))
 
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:
         self.latest_image = image
@@ -2015,6 +2075,17 @@ class MainWindow(QMainWindow):
             for event_type, count in item.event_counts_60s.items():
                 event_counts[event_type] = event_counts.get(event_type, 0) + count
         self.event_tile.set_value(str(sum(event_counts.values())))
+        # The header strip reads the same three measurements the metric tiles use,
+        # so a booth visitor sees the numbers whether or not the tile grid is
+        # shown (it is hidden at density 1, where these are the only place the
+        # rates appear at all).
+        self.fps_stat.set_value(
+            "—" if primary is None else f"{primary.processing_fps:.1f}"
+        )
+        self.detection_stat.set_value(
+            f"{sum(item.detections_per_second for item in metrics):.1f}"
+        )
+        self.event_stat.set_value(str(sum(event_counts.values())))
         primary_stages = next(
             (
                 item.stages

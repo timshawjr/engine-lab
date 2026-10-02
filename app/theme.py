@@ -66,6 +66,10 @@ class Theme:
     # rows pack tightly instead of overprinting the footage.
     overlay_label_height: int = 18
     overlay_badge_width: int = 300
+    # Header stat strip. Three small measured readouts replace the LIVE badge and
+    # the clock: FPS, DET/s and EVENTS. Caption above, value below.
+    header_stat_caption_font: int = 12
+    header_stat_value_font: int = 26
     overlay_border: int = 3
     minimum_window_width: int = 1280
     minimum_window_height: int = 720
