@@ -93,8 +93,8 @@ class HeaderStatTypographyTests(unittest.TestCase):
 
 class DemoPageStructureTests(unittest.TestCase):
     def test_scenario_keys_cover_every_vertical(self) -> None:
-        self.assertEqual(len(SCENARIO_ORDER), 7)
-        self.assertEqual(len(set(SCENARIO_ORDER)), 7)
+        self.assertEqual(len(SCENARIO_ORDER), 6)
+        self.assertEqual(len(set(SCENARIO_ORDER)), 6)
 
 
 if __name__ == "__main__":

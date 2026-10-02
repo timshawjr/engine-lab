@@ -667,7 +667,6 @@ def _phase3_scenario_checks(
         "retail",
         "metro",
         "manufacturing",
-        "robotics",
         "education",
         "health",
         "federal",
@@ -696,7 +695,7 @@ def _phase3_scenario_checks(
             "ordered scenario catalog",
             "FAIL",
             f"expected {expected_ids}, found {actual_ids}",
-            "Restore deterministic scenario order retail, metro, manufacturing, robotics, education, health, federal",
+            "Restore deterministic scenario order retail, metro, manufacturing, education, health, federal",
         )
     for scenario in catalog.values():
         fallback_devices: list[str] = []
@@ -710,7 +709,6 @@ def _phase3_scenario_checks(
                 "retail": {"confidence_min", "iou_threshold", "picked_up_dwell_s"},
                 "metro": {"confidence_min", "count_dwell_s"},
                 "manufacturing": {"confidence_min", "count_dwell_s"},
-                "robotics": {"confidence_min", "count_dwell_s"},
                 "education": {
                     "confidence_min",
                     "count_dwell_s",

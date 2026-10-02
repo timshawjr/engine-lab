@@ -37,7 +37,6 @@ SCENARIO_IDS = (
     "retail",
     "metro",
     "manufacturing",
-    "robotics",
     "education",
     "health",
     "federal",
@@ -311,7 +310,7 @@ def _selftest() -> int:
                 if media_path is None or not media_path.is_file():
                     raise RuntimeError(f"scenario {scenario.id} media is missing")
                 stage_count += len(scenario.stages)
-            return f"7 ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
+            return f"{len(SCENARIO_IDS)} ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
 
         _selftest_check(checks, "Phase 3 local inventory", phase3_local_inventory_check)
     finally:

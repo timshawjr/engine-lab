@@ -24,18 +24,34 @@ class ScenarioCatalogTests(unittest.TestCase):
             ROOT / "media",
         )
 
-    def test_exact_seven_scenario_order(self) -> None:
+    def test_exact_six_scenario_order(self) -> None:
+        """Robotics is deliberately absent.
+
+        It was removed because its footage could not be detected honestly. On
+        robot-cell-workers-720p.mp4, crossroad-1016 put 2 of 100 detections on an
+        actual person (2%) and person-detection-retail-0013 managed 0 of 34, with
+        the real workers behind safety fencing and small in frame. Confidence
+        could not separate signal from noise (the 2 correct hits averaged 0.29
+        against a 0.27 median), so no threshold or model swap fixed it and the
+        tile was ~98% robot arms labelled "person". Shipping a tile that reads
+        "person 49%" on a robot arm in front of a customer was worse than
+        shipping six verticals instead of seven.
+        """
         self.assertEqual(
             tuple(scenario.id for scenario in self.catalog.values()),
             (
                 "retail",
                 "metro",
                 "manufacturing",
-                "robotics",
                 "education",
                 "health",
                 "federal",
             ),
+        )
+        # ScenarioCatalog has no __iter__, so membership has to go through
+        # values() rather than `in`, which would fall back to integer indexing.
+        self.assertNotIn(
+            "robotics", {scenario.id for scenario in self.catalog.values()}
         )
 
     def test_hud_scenario_keys_match_the_catalog_order(self) -> None:
@@ -61,7 +77,10 @@ class ScenarioCatalogTests(unittest.TestCase):
             # QKeyEvent.key() may hand over a plain int; the lookup must still hit.
             self.assertEqual(SCENARIO_KEYS[key.value], scenario_id)
         self.assertEqual(SCENARIO_KEYS[Qt.Key.Key_3], "manufacturing")
-        self.assertEqual(SCENARIO_KEYS[Qt.Key.Key_7], "federal")
+        # Six verticals, so the last one moved from key 7 to key 6 when robotics
+        # was removed.
+        self.assertEqual(SCENARIO_KEYS[Qt.Key.Key_6], "federal")
+        self.assertNotIn(Qt.Key.Key_7, SCENARIO_KEYS)
 
     def test_every_model_has_a_task_label(self) -> None:
         payload = json.loads(
@@ -334,7 +353,6 @@ class ScenarioCatalogTests(unittest.TestCase):
         person_stage = {
             "health": "person_detector",
             "manufacturing": "person_detector",
-            "robotics": "person_detector",
             "education": "person_detector",
             "federal": "perimeter_detector",
         }
@@ -522,23 +540,6 @@ class ScenarioCatalogTests(unittest.TestCase):
             set(rules["business_event_labels"]), {"ppe_worn", "no_ppe"}
         )
 
-    def test_robotics_detects_people_on_three_engines(self) -> None:
-        """Robotics runs crossroad detection on the NPU, worker presence on the
-        GPU, and zone-breach counting on the CPU."""
-        stages = {stage.stage: stage for stage in self.catalog["robotics"].stages}
-        self.assertEqual(stages["detector"].model_id, "person-vehicle-bike-detection-crossroad-1016")
-        self.assertEqual(stages["detector"].device_pref, "NPU")
-        self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
-        self.assertEqual(stages["person_detector"].device_pref, "GPU")
-        self.assertEqual(stages["zone_event"].device_pref, "CPU")
-        # Robotics stays classifier-free: its workers are behind safety fencing
-        # and the person model only sees them in 13 of 40 sampled frames, so
-        # there is no crop stable enough to submit.
-        self.assertNotIn("product_classifier", stages)
-        rules = self.catalog["robotics"].event_rules
-        self.assertNotIn("classify_detector_labels", rules)
-        self.assertIn("count_dwell_s", rules)
-
     def test_education_runs_pose_on_npu_and_counting_on_cpu(self) -> None:
         """Education runs crossroad detection on the NPU, worker presence on the
         GPU, pose estimation on the NPU, and attendance counting on the CPU."""
@@ -558,7 +559,7 @@ class ScenarioCatalogTests(unittest.TestCase):
         """Each new vertical places its detector on the NPU, its person
         detector on the GPU, and its event stage on the CPU in spread mode."""
         policy = DevicePolicy(mode=DeviceMode.SPREAD, density=1)
-        for scenario_id in ("manufacturing", "robotics", "education"):
+        for scenario_id in ("manufacturing", "education"):
             assignments = {
                 item.stage: item
                 for item in build_stage_assignments(

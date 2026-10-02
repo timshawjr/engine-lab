@@ -341,16 +341,6 @@
       "license": "Pexels License - free for commercial use, no attribution required. Re-check at the time of any public or marketing use; free stock licences change."
     },
     {
-      "id": "robot_cell_workers",
-      "file": "robot-cell-workers-720p.mp4",
-      "local_only": true,
-      "local_source": "video-assets/candidates/robot-cell-workers-720p.mp4",
-      "sha256": "5e29e1e6cabd49809b86cf8b39f3ee231c145c5ee5782747c35f200451e3f675",
-      "verified": "Verified 2026-10-01 from the committed bytes, not from a network fetch: 1280x720, 200 frames @ 25 fps = 8.0 s, 4999409 bytes, sha256 computed locally. Frame-checked: automotive assembly line with blue robot arms and a car body, workers partly occluded by safety fencing. Measured: person-vehicle-bike-detection-crossroad-1016 @0.2 gives 2.50 detections/frame (the stage that drives the tile), but 13 of 200 frames are empty - at indices 3, 48, 64, 70, 71, 84, 85 and a 6-frame run at 106-111 - because the empties are spread through the middle of the clip and trimming cannot remove them, so a booth screenshot has roughly a 1-in-15 chance of landing on an empty frame. person-detection-retail-0013 @0.3 is weak here: 0.33 detections/frame, present in 13/40 sampled frames, maximum confidence 0.60. Selected for the robotics vertical in place of queue_alt because it is the only candidate with robots and people in a fixed wide shot, and its primary detector is denser (2.50/frame vs 1.65/frame in app).",
-      "provenance": "Pexels video 6450803. Committed to this repository under video-assets/candidates/ by PR #5 (branch assets/footage-library, commit f6f447b). No direct download URL was available when this entry was written, so there is deliberately no 'url' key and the bytes in this repository are the source of record; tools/verify_sources.py skips local_only entries rather than claim a network verification that did not happen.",
-      "license": "Pexels License - free for commercial use, no attribution required. Re-check at the time of any public or marketing use; free stock licences change."
-    },
-    {
       "id": "edu_campus_walking",
       "file": "edu-campus-walking-720p.mp4",
       "local_only": true,

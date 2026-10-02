@@ -885,3 +885,70 @@ C-level heartbeat for `hangwatch`, and removing the widget did not remove `mark_
 
 Gates after this change: `95 tests OK` (one new typography test),
 selftest `11 PASS / 0 FAIL`, preflight `107 PASS / 0 WARN / 0 FAIL`.
+## Robotics removed: six verticals
+
+The OEP Robotics suite was implemented, wired to purpose-shot factory footage, and then removed. It
+is the one case where a vertical was built, measured, and deliberately withdrawn.
+
+### Why
+
+On `robot-cell-workers-720p.mp4` the tile rendered `person 49%` on a blue robot arm while both real
+workers - one on an elevated platform at top right, one behind the safety fence - went unlabelled.
+Every mechanism in the stack was measured against worker positions verified by eye on an annotated
+frame:
+
+| Mechanism | Detections on an actual person |
+|---|---|
+| `crossroad-1016` (the stage that drove the tile) | **2 of 100 (2%)**; 98 landed on robot arms and structure |
+| `person-detection-retail-0013` | **0 of 34 (0%)** |
+| `yolo11n` (COCO-80) | 95.7 det/frame of unrelated classes: `cell_phone` x3537, `cake` x30 |
+| CLIP zero-shot, robotics vocabulary | could not separate worker from robot arm: both real workers read `robot_arm`; 2/5 correct on verified regions |
+
+Confidence could not rescue it. `person` confidence had a median of 0.27 (p25 0.23, p90 0.48) and the
+two *correct* detections averaged 0.29 - indistinguishable from the false positives. On frame 90 the
+detector returned exactly one detection, on a robot arm, and missed both workers.
+
+`confidence_min` was raised as an experiment and reverted: 0.2 kept 97% of frames populated, 0.4 kept
+53%, 0.6 kept 14% - it deletes the real detections along with the false ones and eventually empties
+the tile.
+
+Renaming the on-screen label from `person` to `robot` was considered and rejected. It changes the word
+next to a wrong box rather than the accuracy, `robot` is not a class in any model in the stack (COCO-80
+has no robot class), and CLIP says `robot_arm` on only 58% of those boxes anyway - so 42% would still
+be wrong under a friendlier name.
+
+### An earlier mistake, recorded
+
+The clip was originally selected on **density alone**: 2.50 det/frame against the incumbent's 1.65.
+Density was never the right test. What mattered was whether the detections were on the subject, which
+was not measured until the tile was on screen in front of a customer.
+
+### What changed
+
+- `config/scenarios.json`: the robotics scenario block removed (pure deletion, 65 lines)
+- `config/models.json`: the `robot_cell_workers` media entry removed; manifest regenerated
+  (`tools/download_models.py --media-only`, 12 media entries, 0 failures)
+- `app/hud.py`, `app/main.py`, `tools/preflight.py`, `tools/review_sessions.py`,
+  `tools/benchmark_matrix.py`: scenario lists and expected order down to six
+- `app/main.py`: the selftest now reports `len(SCENARIO_IDS)` scenarios rather than a literal
+- tests: the seven-scenario order test became `test_exact_six_scenario_order`, carrying the measured
+  case for removal and asserting robotics is absent; the robotics stage test and its entries in the
+  GPU-off and spread-assignment tests were removed; the HUD key test now pins `Key_6` to `federal` and
+  asserts `Key_7` is unmapped
+- docs: README tables renumbered (key 7 -> 6), plus a "Robotics: built, measured, then removed"
+  section recording the numbers so the clip is not re-picked
+
+`robot-cell-workers-720p.mp4` remains in `video-assets/candidates/` as a rejected reference. The
+baked robotics CLIP vocabulary was deliberately left out of the repository rather than committed as
+dead config.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 94 tests ... OK` (exit 0) |
+| `python -m app.main --selftest` | `11 PASS, 0 FAIL` (exit 0); "6 ordered scenarios, 21 stages" |
+| `python tools/verify_sources.py` | `48 PASS, 0 FAIL` (exit 0) |
+| `python tools/preflight.py` | `105 PASS, 0 WARN, 0 FAIL` (exit 0; was 107 - one scenario and one vocabulary row) |
+| `--scenario robotics` | rejected by the CLI: `invalid choice: 'robotics' (choose from retail, metro, manufacturing, education, health, federal)` |
+| HUD | status bar reads `1-6 scenario`; keys 1-6 map in catalog order |

@@ -21,7 +21,6 @@ SCENARIOS = (
     "retail",
     "metro",
     "manufacturing",
-    "robotics",
     "education",
     "health",
     "federal",

@@ -30,11 +30,11 @@ declaration, or metric relabeling was added.
 - `app/hud.py` - Qt booth UI, overlays, gauges, stream tiles, attract mode, F1 operator view.
 - `app/engine/device_policy.py` — modes, NPU/GPU toggles, density, and explicit round-robin placement.
 - `app/engine/availability.py` — model × device startup gate, `EXECUTION_DEVICES` validation, fingerprint cache.
-- `app/engine/pipelines.py` — seven scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
+- `app/engine/pipelines.py` — six scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
 - `app/engine/stages.py` — static-shape preprocessing, YOLO/SSD/classification/pose postprocessing.
 - `app/engine/events.py` — business-event dictionaries and track/zone state.
 - `app/telemetry/` — PDH GPU/NPU counters, SetupAPI device identity, psutil CPU, and 5 Hz sampling.
-- `config/scenarios.json` — the seven normalized-zone scenario definitions and event thresholds.
+- `config/scenarios.json` — the six normalized-zone scenario definitions and event thresholds.
 - `tools/preflight.py` — the local PASS/FAIL gate.
 - `tools/benchmark_matrix.py` — the long-run scenario × density acceptance matrix.
 - `bench_report.md` — measured evidence, including the explicit Phase 2 miss.
@@ -68,7 +68,7 @@ The current local checks on this machine are:
 
 - source verification: **43 PASS, 0 FAIL**;
 - preflight: **89 PASS, 0 WARN, 0 FAIL**, including 20 asynchronous inferences for every model ×
-  NPU/GPU/CPU combination and the seven Phase 3 scenario graphs;
+  NPU/GPU/CPU combination and the six Phase 3 scenario graphs;
 - network-blocked self-test: **11 PASS, 0 FAIL**;
 - unit tests: **25 PASS, 0 FAIL**.
 
@@ -212,41 +212,38 @@ Run any vertical explicitly with:
 .venv\Scripts\python.exe -m app.main --source loop --scenario retail        --mode spread --density 1 --fullscreen
 .venv\Scripts\python.exe -m app.main --source loop --scenario metro        --mode spread --density 1 --fullscreen
 .venv\Scripts\python.exe -m app.main --source loop --scenario manufacturing --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario robotics      --mode spread --density 1 --fullscreen
 .venv\Scripts\python.exe -m app.main --source loop --scenario education     --mode spread --density 1 --fullscreen
 .venv\Scripts\python.exe -m app.main --source loop --scenario health       --mode spread --density 1 --fullscreen
 .venv\Scripts\python.exe -m app.main --source loop --scenario federal      --mode spread --density 1 --fullscreen
 ```
 
-The seven graphs are:
+The six graphs are:
 
 | Key | Scenario | Video | Measured stage story |
 |---:|---|---|---|
 | `1` | Retail | `retail-checkout.mp4` | `product-detection-0001` on the NPU → CLIP names the item from a declared store vocabulary on the GPU → shelf/zone events on the CPU |
 | `2` | Metro | `smart-city-traffic-montage.mp4` | crossroad-1016 vehicle/pedestrian detection on the NPU → lane/zone counts on the CPU (detector class is the business answer; no weak classifier) |
 | `3` | Manufacturing | `mfg-warehouse-ppe-1080p.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → PPE compliance check with zero-shot CLIP on the GPU → zone-occupancy counting on the CPU |
-| `4` | Robotics | `robot-cell-workers-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → approach-zone breach events on the CPU |
-| `5` | Education | `edu-campus-walking-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
-| `6` | Health and Life Sciences | `medical-eldercare.mp4` | person detection on the GPU → pose heatmap/PAF decoding on the NPU → posture/zone events on the CPU |
-| `7` | Federal and Aerospace | `gov-vehicle-entry.mp4` | person/vehicle/plate detection across NPU and GPU → independent perimeter copies → IoU tracks and plate events on the CPU |
+| `4` | Education | `edu-campus-walking-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
+| `5` | Health and Life Sciences | `medical-eldercare.mp4` | person detection on the GPU → pose heatmap/PAF decoding on the NPU → posture/zone events on the CPU |
+| `6` | Federal and Aerospace | `gov-vehicle-entry.mp4` | person/vehicle/plate detection across NPU and GPU → independent perimeter copies → IoU tracks and plate events on the CPU |
 
 The initial `spread` assignment is explicit and visible in each tile. Detection and pose work use
 the NPU where the measured graph calls for it. `person-detection-retail-0013` is explicitly
-GPU-preferred everywhere it appears (health, federal, manufacturing, robotics, education) because
+GPU-preferred everywhere it appears (health, federal, manufacturing, education) because
 it was measured returning **zero detections on the NPU** on this footage regardless of cache
 state, while its pose stage remains on the NPU. The operator overlay always reports the actual
 `EXECUTION_DEVICES`; the requested preference is never presented as proof.
 
 ### Open Edge Platform suite alignment
 
-The seven verticals follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy:
+The six verticals shown follow the [Open Edge Platform](https://github.com/open-edge-platform) suite taxonomy:
 
 | OEP suite | Scenario id | What it shows | Measured density |
 |---|---|---|---|
 | Retail | `retail` | Shelf-side product detection and naming on the store footage | 0.83 det/frame, 17 tracks |
 | Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage | 34.7 det/frame, 530 tracks |
 | Manufacturing | `manufacturing` | Warehouse workers in hi-vis and hard hats, PPE compliance, zone occupancy | 4.25 det/frame, 40 tracks, 0 empty frames |
-| Robotics | `robotics` | Robot cell with workers behind safety fencing, zone-breach events | 3.51 det/frame, 245 tracks, 2.8% empty frames |
 | Education | `education` | Campus presence plus on-device pose for posture/attendance | 9.53 det/frame, 36 tracks, 0 empty frames |
 | Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage | 2.47 det/frame, 22 tracks |
 | Federal and Aerospace | `federal` | Multi-stream perimeter detection and plate tracking on the entry footage | 8.79 det/frame, 317 tracks |
@@ -256,11 +253,34 @@ and track counts in the table coming from those runs' `summary.json`. Metro is d
 traffic montage is a busy multi-vehicle scene; retail is sparse in box count but is the suite that
 *names* what it finds, which is the point of that tile.
 
-The three suites added most recently use purpose-shot footage rather than whatever happened to be
+The two suites added most recently use purpose-shot footage rather than whatever happened to be
 cached, which is why education went from 0.88 to 9.53 detections per frame. Manufacturing and
-Education **never render an empty frame** across 499 reviewed frames each. Robotics is the one
-remaining weak spot at 2.8% empty frames: the workers are partly occluded by safety fencing, so
-detection genuinely drops out. That is stated here rather than hidden.
+Education **never render an empty frame** across 499 reviewed frames each.
+
+### Robotics: built, measured, then removed
+
+The OEP Robotics suite is **not** in the demo. It was implemented, wired to purpose-shot factory
+footage, and then removed because the footage could not be detected honestly. The numbers, so this
+is not re-attempted by the next person:
+
+| Mechanism | Result on `robot-cell-workers-720p.mp4` |
+|---|---|
+| `crossroad-1016` | 2 of 100 detections on an actual person (**2%**); the other 98% landed on robot arms and structure |
+| `person-detection-retail-0013` | 0 of 34 (**0%**) |
+| `yolo11n` (COCO) | 95.7 det/frame of unrelated classes — `cell_phone` ×3537, `cake` ×30 |
+| CLIP zero-shot | cannot separate a worker from a robot arm: both real workers read `robot_arm`, 2/5 correct on regions verified by eye |
+
+Confidence could not rescue it. `person` confidence had a median of 0.27, and the 2 **correct**
+detections averaged 0.29 — statistically indistinguishable from the false positives. Raising
+`confidence_min` to 0.6 emptied the tile rather than cleaning it.
+
+Renaming the on-screen label from `person` to `robot` was considered and rejected: it would change
+the word next to a wrong box, not the accuracy, and `robot` is not a class in any model in the
+stack (COCO-80 has no robot class).
+
+What the tile actually showed was `person 49%` drawn on a blue robot arm while both real workers
+went unlabelled. Six honest verticals beat seven with one lying. `robot-cell-workers-720p.mp4`
+remains in `video-assets/candidates/` as a rejected reference.
 
 ### Live failover controls
 
@@ -284,7 +304,7 @@ for NPU-only; that tile renders empty and says so rather than quietly becoming s
 ### Attract and unattended run
 
 Attract mode hides the gauges, shows a large vertical headline, cycles deterministically through
-all seven scenarios, and continues processing/telemetry in the background. Any key returns to the
+all six scenarios, and continues processing/telemetry in the background. Any key returns to the
 measured demo page.
 
 ```cmd
@@ -414,5 +434,5 @@ screenshots, OCRs, or shells out to Task Manager.
 
 The strict Phase 2 density-8 relation is still not claimed as a pass. The complete evidence and
 numbers are in `bench_report.md`; Phase 3 does not hide or reinterpret that result. Phase 3 long-run
-acceptance concerns the seven scenario durations, density-4 operation, attract-mode stability, and
+acceptance concerns the scenario durations, density-4 operation, attract-mode stability, and
 RSS criterion, while retaining the same honest metric definitions.

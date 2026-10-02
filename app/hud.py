@@ -80,7 +80,6 @@ SCENARIO_ORDER = (
     "retail",
     "metro",
     "manufacturing",
-    "robotics",
     "education",
     "health",
     "federal",

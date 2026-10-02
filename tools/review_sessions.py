@@ -411,7 +411,6 @@ def main(argv: list[str] | None = None) -> int:
             "retail",
             "metro",
             "manufacturing",
-            "robotics",
             "education",
             "health",
             "federal",
