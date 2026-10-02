@@ -32,8 +32,10 @@ every byte in this repository is traceable. If this repo is ever shown publicly 
 used in Intel marketing material, re-check both licence terms at that time — free stock licences
 can change, and a repo that outlives the demo should not assume a licence from 2026 still holds.
 
-Provenance for each clip — source URL, what was trimmed, and what the frame check actually
-showed — is in `media-entries-to-add.json` and `docs/STATE.md` section 8.
+Provenance for each clip — source library and video id, the measured detection
+figures, and the exact sha256 of the bytes committed here — is recorded in
+`config/models.json` under `media`. Clips that are wired into a scenario are listed
+there with a `local_source` pointing back at this folder.
 
 ## Verification standard applied
 
@@ -61,3 +63,28 @@ title or the source listing. The bar was the same for every clip:
 - **The lecture-hall and seated-classroom clips were rejected on purpose.** A person model trained
   on standing and walking people detects seated students poorly, which would have produced a booth
   screenshot with no boxes on it.
+
+## What was wired in, and what was measured
+
+Three of the five were selected after screening every candidate against the real detectors on
+40 uniformly sampled frames each (`person-detection-retail-0013` @0.3 and
+`person-vehicle-bike-detection-crossroad-1016` @0.2, on GPU):
+
+| clip | wired to | crossroad det/frame | min det in any frame | person model | outcome |
+|---|---|---:|---:|---:|---|
+| `mfg-warehouse-ppe-1080p.mp4` | `manufacturing` | 2.10 | 2 | 2.05/f, conf 0.98 | selected - 4.28 det/frame in app, 0 empty frames |
+| `robot-cell-workers-720p.mp4` | `robotics` | 2.50 | 0 | 0.33/f, conf 0.60 | selected with a caveat - 3.51 det/frame in app, 2.8% empty |
+| `edu-campus-walking-720p.mp4` | `education` | 4.72 | 4 | 5.22/f, conf 0.97 | selected - 9.53 det/frame in app, 0 empty frames |
+| `mfg-corridor-hardhats-720p.mp4` | - | 1.50 | 1 | 1.45/f, conf 0.91 | alternate; sparser than the warehouse clip |
+| `edu-hallway-walking-720p.mp4` | - | 4.80 | 3 | 5.17/f, conf 0.87 | alternate; comparable to campus, 12 s vs 18 s |
+
+**The `robot-cell-workers-720p.mp4` caveat, confirmed rather than assumed:** 13 of its 200 frames are
+empty, at indices 3, 48, 64, 70, 71, 84, 85 and a six-frame run at 106-111. The empties are spread
+through the middle of the clip, so trimming the head does not remove them, and a booth screenshot has
+roughly a 1-in-15 chance of landing on an empty frame. It was still selected because it is the only
+candidate with robots and people in a fixed wide shot, and its primary detector is denser than the
+clip it replaced (2.50 vs 1.65 det/frame in app).
+
+**Not tested:** whether zero-shot CLIP can name the PPE in the warehouse clip. `torch` is not in the
+pinned virtual environment, and adding a dependency to bake a text tower is not a decision this
+branch should make. The manufacturing tile therefore ships with no classifier and makes no PPE claim.

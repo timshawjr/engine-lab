@@ -141,6 +141,37 @@ def _atomic_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def _vendor_local(media: dict[str, Any], destination: Path, force: bool) -> str:
+    """Copy a clip that is committed in this repository instead of fetched.
+
+    Some footage has no public download URL, so the bytes under
+    ``video-assets/candidates/`` are the source of record. Copying them keeps
+    ``media/`` machine-local and regenerable, exactly like a download, and the
+    recorded sha256 proves the copy is byte-identical to what was reviewed.
+    """
+    if destination.exists() and destination.stat().st_size > 0 and not force:
+        return "cached"
+    source = ROOT / media["local_source"]
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"{media['id']}: local_only media is missing its committed source {source}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    shutil.copyfile(source, temporary)
+    os.replace(temporary, destination)
+    expected = media.get("sha256")
+    if expected:
+        digest = _sha256(destination)
+        if digest != expected:
+            destination.unlink(missing_ok=True)
+            raise ValueError(
+                f"{media['id']}: vendored copy sha256 {digest} does not match the "
+                f"reviewed {expected}"
+            )
+    return "vendored"
+
+
 def _download_http(url: str, destination: Path, force: bool, retries: int = 3) -> str:
     if destination.exists() and destination.stat().st_size > 0 and not force:
         return "cached"
@@ -337,13 +368,19 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
             destination = ROOT / "media" / media["file"]
             print(f"VIDEO {media_id}")
             try:
-                status = _download_http(media["url"], destination, force)
+                if media.get("local_only"):
+                    status = _vendor_local(media, destination, force)
+                    origin = f"repo:{media['local_source']}"
+                else:
+                    status = _download_http(media["url"], destination, force)
+                    origin = media["url"]
                 if not _valid_mp4(destination):
                     raise RuntimeError(f"downloaded media has no MP4 ftyp signature: {destination}")
                 digest = _sha256(destination)
                 manifest["media"][media_id] = {
                     "status": status,
-                    "source_url": media["url"],
+                    "source_url": None if media.get("local_only") else media["url"],
+                    "provenance": origin,
                     "file": str(destination.relative_to(ROOT)),
                     "bytes": destination.stat().st_size,
                     "sha256": digest,
@@ -382,13 +419,19 @@ def main(argv: list[str] | None = None) -> int:
         for media in config["media"]:
             destination = ROOT / "media" / media["file"]
             try:
-                status = _download_http(media["url"], destination, args.force)
+                if media.get("local_only"):
+                    status = _vendor_local(media, destination, args.force)
+                    origin = f"repo:{media['local_source']}"
+                else:
+                    status = _download_http(media["url"], destination, args.force)
+                    origin = media["url"]
                 if not _valid_mp4(destination):
                     raise RuntimeError(f"downloaded media has no MP4 ftyp signature: {destination}")
                 digest = _sha256(destination)
                 manifest["media"][media["id"]] = {
                     "status": status,
-                    "source_url": media["url"],
+                    "source_url": None if media.get("local_only") else media["url"],
+                    "provenance": origin,
                     "file": str(destination.relative_to(ROOT)),
                     "bytes": destination.stat().st_size,
                     "sha256": digest,

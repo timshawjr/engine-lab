@@ -531,6 +531,87 @@ stretches and a booth visitor may land on an empty frame. This is recorded rathe
   verified source URL, so it is deliberately not wired in. Adding it requires sourcing a real URL
   and recording it, not inventing one.
 
+## Footage swap — purpose-shot clips for Manufacturing, Robotics and Education
+
+The three suites added above were built from whatever clips happened to be cached, and screened
+honestly as a result: education ran at 0.88 detections/frame and robotics at 1.65. PR #5
+(branch `assets/footage-library`, commit `f6f447b`, merged as a fast-forward) added five purpose-shot
+candidates under `video-assets/candidates/`. All five were screened against the real detectors on 40
+uniformly sampled frames each before any of them was wired in.
+
+### Screening, before wiring
+
+| clip | res / length | crossroad det/f | min det in any frame | person det/f | mean conf |
+|---|---|---:|---:|---:|---:|
+| `edu-campus-walking-720p.mp4` | 1280x720, 18.0 s | 4.72 | **4** | 5.22 | 0.97 |
+| `edu-hallway-walking-720p.mp4` | 1280x720, 12.0 s | 4.80 | 3 | 5.17 | 0.87 |
+| `mfg-warehouse-ppe-1080p.mp4` | 1920x1080, 13.5 s | 2.10 | 2 | 2.05 | 0.98 |
+| `mfg-corridor-hardhats-720p.mp4` | 1280x720, 13.5 s | 1.50 | 1 | 1.45 | 0.91 |
+| `robot-cell-workers-720p.mp4` | 1280x720, 8.0 s | 2.50 | **0** | 0.33 | 0.60 |
+
+Pose was checked separately on the NPU with the app's own PAF decode: 18 keypoints in 20/20 frames on
+both education candidates, at mean keypoint confidence 0.729 (campus) and 0.684 (hallway) against
+0.635 on the eldercare clip the health vertical uses.
+
+### Wired in, and the result
+
+| Vertical | video_id | det/frame before | det/frame after | Empty frames | Tracks | Zone observations |
+|---|---|---:|---:|---:|---:|---|
+| `manufacturing` | `mfg_warehouse_ppe` | 4.41 | 4.28 | **0 / 499** | 36 | work_cell 1229, aisle_entry 891 |
+| `robotics` | `robot_cell_workers` | 1.65 | **3.51** | 14 / 499 (2.8%) | 245 | cell_perimeter 562, approach_zone 509 |
+| `education` | `edu_campus_walking` | 0.88 | **9.53** | **0 / 499** | 36 | campus_west 2957, campus_east 1797 |
+
+Education is roughly an order of magnitude denser and can no longer render an empty frame. Robotics
+more than doubled. Manufacturing is flat on density but is now a warehouse with workers in hi-vis and
+hard hats rather than a retail aisle, which is the point of the tile. The two rejected alternates
+remain in `video-assets/candidates/` and their measurements are recorded in that folder's README.
+
+### Zones had to be retuned, and one was silently dead
+
+`_center_in_zone` attributes a detection to the **first** matching zone, so a zone almost contained
+by an earlier one never registers. Education's `aisle` zone covered 99.9% of the boxes geometrically
+and still logged **4** observations against `classroom`'s 4750, because `classroom` shadowed it. That
+is not a rounding detail: the old zone geometry was inherited from the previous footage.
+
+Recomputing box-centre percentiles from the recorded runs: education centres sit at y≈0.69 and spread
+horizontally (x p10 0.17, p50 0.47, p90 0.76), so the zones are now a left/right split —
+`campus_west` [0.0, 0.55, 0.5, 0.45] takes 62.2% and `campus_east` [0.5, 0.55, 0.5, 0.45] takes
+37.8%, 100% combined. `queue_lane` in robotics was a leftover name from the queue footage and was
+renamed `cell_perimeter`; its geometry already registered. After the change both education zones log
+(2957 / 1797) and education produces a `posture_alert` event from the pose stage, which the previous
+footage did not.
+
+### Sourcing: local_only, with no invented URL
+
+No direct download URL was available for these clips, so the manifest entries carry **no `url` key**
+at all rather than a plausible-looking one. Each is marked `local_only` with a `local_source` path
+into the committed folder and the reviewed `sha256`:
+
+- `tools/verify_sources.py` already skipped `local_only` entries by design — it states that claiming a
+  network verification would be a fabricated result — so the source count stayed at **48 PASS, 0 FAIL**
+  rather than gaining three unverifiable rows.
+- `tools/download_models.py` gained `_vendor_local()`, which copies the committed bytes into `media/`,
+  checks the sha256 against the reviewed value, and refuses the file on mismatch. Both the normal and
+  `--media-only` paths use it. `tools/download_models.py --media-only` reports all three as `vendored`
+  with matching digests, 13 media entries, 0 failures.
+- The manifest records `source_url: null` and `provenance: "repo:<path>"` so the state file cannot be
+  mistaken for a network fetch that never happened.
+
+### Gates after the swap
+
+| Gate | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 87 tests ... OK` (exit 0; unchanged by the swap — the swap changed config and the downloader, not stage graphs) |
+| `python -m app.main --selftest` | `11 PASS, 0 FAIL` (exit 0); "11 models and 13 videos present" |
+| `python tools/verify_sources.py` | `48 PASS, 0 FAIL` (exit 0) |
+| `python tools/preflight.py` | `104 PASS, 0 WARN, 0 FAIL` (exit 0; was 101 — three new video rows) |
+
+### Not done
+
+CLIP PPE naming on the warehouse clip remains untested: `torch` is not in the pinned venv, and adding
+a dependency needs a decision. The manufacturing tile ships with no classifier and makes no PPE claim.
+
+
 ## GPU-off fallback fix
 
 ### Symptom

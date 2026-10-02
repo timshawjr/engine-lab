@@ -193,9 +193,9 @@ The seven graphs are:
 |---:|---|---|---|
 | `1` | Retail | `retail-checkout.mp4` | `product-detection-0001` on the NPU → CLIP names the item from a declared store vocabulary on the GPU → shelf/zone events on the CPU |
 | `2` | Metro | `smart-city-traffic-montage.mp4` | crossroad-1016 vehicle/pedestrian detection on the NPU → lane/zone counts on the CPU (detector class is the business answer; no weak classifier) |
-| `3` | Manufacturing | `store-aisle-detection.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → zone-occupancy counting on the CPU |
-| `4` | Robotics | `one-by-one-person-detection.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → approach-zone breach events on the CPU |
-| `5` | Education | `face-demographics-walking.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
+| `3` | Manufacturing | `mfg-warehouse-ppe-1080p.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → zone-occupancy counting on the CPU |
+| `4` | Robotics | `robot-cell-workers-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → approach-zone breach events on the CPU |
+| `5` | Education | `edu-campus-walking-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
 | `6` | Health and Life Sciences | `medical-eldercare.mp4` | person detection on the GPU → pose heatmap/PAF decoding on the NPU → posture/zone events on the CPU |
 | `7` | Federal and Aerospace | `gov-vehicle-entry.mp4` | person/vehicle/plate detection across NPU and GPU → independent perimeter copies → IoU tracks and plate events on the CPU |
 
@@ -214,22 +214,22 @@ The seven verticals follow the [Open Edge Platform](https://github.com/open-edge
 |---|---|---|---|
 | Retail | `retail` | Shelf-side product detection and naming on the store footage | 0.83 det/frame, 17 tracks |
 | Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage | 34.7 det/frame, 530 tracks |
-| Manufacturing | `manufacturing` | People-and-vehicles aisle detection, worker presence, zone occupancy | 4.41 det/frame, 27 tracks |
-| Robotics | `robotics` | Human-approach detection and zone-breach events | 1.65 det/frame, 4 tracks |
-| Education | `education` | Presence detection plus on-device pose for posture/attendance | 0.88 det/frame, 6 tracks |
+| Manufacturing | `manufacturing` | Warehouse workers in hi-vis and hard hats, zone occupancy | 4.28 det/frame, 36 tracks, 0 empty frames |
+| Robotics | `robotics` | Robot cell with workers behind safety fencing, zone-breach events | 3.51 det/frame, 245 tracks, 2.8% empty frames |
+| Education | `education` | Campus presence plus on-device pose for posture/attendance | 9.53 det/frame, 36 tracks, 0 empty frames |
 | Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage | 2.47 det/frame, 22 tracks |
 | Federal and Aerospace | `federal` | Multi-stream perimeter detection and plate tracking on the entry footage | 8.79 det/frame, 317 tracks |
 
-Density is mean raw detections per frame over a 20–30 s `tools\review_sessions.py` run, with the
-frame and track counts in the table coming from those runs' `summary.json`. Metro is dense because
-the traffic montage is a busy multi-vehicle scene; retail is sparse in box count but is the suite
-that *names* what it finds, which is the point of that tile.
+Density is mean raw detections per frame over a 20 s `tools\review_sessions.py` run, with the frame
+and track counts in the table coming from those runs' `summary.json`. Metro is dense because the
+traffic montage is a busy multi-vehicle scene; retail is sparse in box count but is the suite that
+*names* what it finds, which is the point of that tile.
 
-The three newly added suites are real but visibly sparser than metro and federal, because the
-footage available for them contains fewer detectable subjects. Manufacturing is dense enough to
-carry a booth tile on its own; robotics and education show one to four subjects at a time, and
-robotics in particular has quiet stretches where the frame is briefly empty. This is stated here
-rather than hidden: no throughput or detection figure in this demo is inflated to cover it.
+The three suites added most recently use purpose-shot footage rather than whatever happened to be
+cached, which is why education went from 0.88 to 9.53 detections per frame. Manufacturing and
+Education **never render an empty frame** across 499 reviewed frames each. Robotics is the one
+remaining weak spot at 2.8% empty frames: the workers are partly occluded by safety fencing, so
+detection genuinely drops out. That is stated here rather than hidden.
 
 ### Live failover controls
 

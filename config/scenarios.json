@@ -197,8 +197,8 @@
       "id": "manufacturing",
       "title": "Manufacturing",
       "vertical": "Manufacturing",
-      "business_line": "Aisle presence and safety: people and vehicles detected on the NPU, worker presence confirmed on the GPU, and zone-occupancy counting on the CPU — all on one SoC.",
-      "video_id": "store_aisle_alt",
+      "business_line": "Warehouse presence and safety: people and vehicles detected on the NPU, worker presence confirmed on the GPU, and zone-occupancy counting on the CPU — all on one SoC.",
+      "video_id": "mfg_warehouse_ppe",
       "stages": [
         {
           "stage": "detector",
@@ -262,7 +262,7 @@
         "event_cooldown_s": 1.0
       },
       "ticker": [
-        "Detect people and vehicles in the aisle",
+        "Detect people and vehicles on the warehouse floor",
         "Confirm worker presence on the GPU",
         "Count zone occupancy on the CPU",
         "No server round-trip"
@@ -272,8 +272,8 @@
       "id": "robotics",
       "title": "Robotics",
       "vertical": "Robotics",
-      "business_line": "Human-approach safety for mobile robots: person detection on the NPU, worker presence on the GPU, and zone-breach events on the CPU — all on one SoC.",
-      "video_id": "queue_alt",
+      "business_line": "Human-robot safety on the factory floor: person and vehicle detection on the NPU, worker presence on the GPU, and zone-breach events on the CPU — all on one SoC.",
+      "video_id": "robot_cell_workers",
       "stages": [
         {
           "stage": "detector",
@@ -303,7 +303,7 @@
           "kind": "person_entry"
         },
         {
-          "name": "queue_lane",
+          "name": "cell_perimeter",
           "roi": [
             0.0,
             0.0,
@@ -327,7 +327,7 @@
         "event_cooldown_s": 1.0
       },
       "ticker": [
-        "Detect each person in the queue",
+        "Detect workers and robot cells on the NPU",
         "Track approach by measured IoU",
         "Zone-breach alert on the CPU",
         "No server round-trip"
@@ -337,8 +337,8 @@
       "id": "education",
       "title": "Education",
       "vertical": "Education",
-      "business_line": "Classroom presence and attendance: person detection on the NPU, pose estimation for posture, and counting events on the CPU — no video leaves the room.",
-      "video_id": "walking_people",
+      "business_line": "Campus presence and attendance: person detection on the NPU, pose estimation for posture, and counting events on the CPU — no video leaves the campus.",
+      "video_id": "edu_campus_walking",
       "stages": [
         {
           "stage": "detector",
@@ -363,22 +363,22 @@
       ],
       "zones": [
         {
-          "name": "classroom",
+          "name": "campus_west",
           "roi": [
-            0.1,
-            0.1,
-            0.8,
-            0.8
+            0.0,
+            0.55,
+            0.5,
+            0.45
           ],
           "kind": "person_entry"
         },
         {
-          "name": "aisle",
+          "name": "campus_east",
           "roi": [
-            0.0,
-            0.6,
-            1.0,
-            0.4
+            0.5,
+            0.55,
+            0.5,
+            0.45
           ],
           "kind": "person_entry"
         }
@@ -400,10 +400,10 @@
         "event_cooldown_s": 4.0
       },
       "ticker": [
-        "Detect each person in the room",
+        "Detect each student on campus",
         "Estimate pose entirely on-device",
         "Count attendance by zone",
-        "No video leaves the room"
+        "No video leaves the campus"
       ]
     },
     {
