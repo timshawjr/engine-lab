@@ -15,7 +15,16 @@ from typing import Any
 import numpy as np
 import psutil
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QImage, QKeyEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QKeyEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -207,6 +216,25 @@ def _platform_peak(
     return "Peak TOPS unavailable", ""
 
 
+def fitted_video_size(
+    canvas_width: float,
+    canvas_height: float,
+    image_width: float,
+    image_height: float,
+) -> tuple[float, float]:
+    """Size of an image letterboxed into a canvas, preserving aspect ratio.
+
+    Extracted as a pure function so the layout arithmetic can be asserted in a
+    unit test without standing up a QApplication, which is what a QWidget
+    requires and what no other test in this suite does. The one-line body is
+    unchanged from the inline version it replaced.
+    """
+    if canvas_width <= 0 or canvas_height <= 0 or image_width <= 0 or image_height <= 0:
+        return (0.0, 0.0)
+    scale = min(canvas_width / image_width, canvas_height / image_height)
+    return (image_width * scale, image_height * scale)
+
+
 class FrameCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -239,15 +267,36 @@ class FrameCanvas(QWidget):
     def _video_rect(self) -> QRectF:
         if self._image is None or self._image.isNull():
             return QRectF()
-        scale = min(self.width() / self._image.width(), self.height() / self._image.height())
-        width = self._image.width() * scale
-        height = self._image.height() * scale
+        width, height = fitted_video_size(
+            self.width(),
+            self.height(),
+            self._image.width(),
+            self._image.height(),
+        )
         return QRectF(
             (self.width() - width) / 2.0,
             (self.height() - height) / 2.0,
             width,
             height,
         )
+
+    def video_geometry(self) -> dict[str, float]:
+        """Measured on-video picture size, for layout verification.
+
+        A 16:9 clip is height-limited inside this canvas, so the only way to make
+        the picture bigger is to give it more height. That is not something to
+        eyeball from a screenshot, where a bright placement bar or a caption can
+        be mistaken for footage; this reports the rect the image is actually
+        drawn into.
+        """
+        rect = self._video_rect()
+        return {
+            "canvas_width": float(self.width()),
+            "canvas_height": float(self.height()),
+            "video_width": round(rect.width(), 1),
+            "video_height": round(rect.height(), 1),
+            "video_area": round(rect.width() * rect.height(), 1),
+        }
 
     def _draw_zone(self, painter: QPainter, video_rect: QRectF, zone: Any) -> None:
         x, y, width, height = zone.roi
@@ -267,7 +316,7 @@ class FrameCanvas(QWidget):
             QColor(THEME.overlay_fill),
         )
         painter.setPen(QPen(QColor(THEME.overlay_text)))
-        painter.setFont(QFont(THEME.font_family, THEME.font_regular))
+        painter.setFont(QFont(THEME.font_family, THEME.font_detection_label))
         painter.drawText(
             QRectF(rect.left(), rect.top(), rect.width(), THEME.overlay_label_height),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -338,7 +387,7 @@ class FrameCanvas(QWidget):
     ) -> None:
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        font = QFont(THEME.font_family, THEME.font_overlay)
+        font = QFont(THEME.font_family, THEME.font_detection_label)
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         # Labels are drawn above their box, but boxes near the top edge have no
@@ -416,23 +465,31 @@ class FrameCanvas(QWidget):
             self._draw_zone(painter, video_rect, zone)
         self._draw_detections(painter, video_rect)
         if self.show_header:
+            # Shrink to fit the text rather than clipping it: the badge sits over
+            # the footage and a truncated detection count reads as a bug.
+            badge_font = QFont(THEME.font_family, THEME.font_detection_label)
             badge = f"{self.header_text} · {len(self._detections)} detection(s)"
+            badge_metrics = QFontMetrics(badge_font)
+            badge_width = min(
+                video_rect.width() - THEME.spacing_sm,
+                badge_metrics.horizontalAdvance(badge) + THEME.spacing_md,
+            )
             painter.fillRect(
                 QRectF(
                     video_rect.left(),
                     video_rect.top(),
-                    THEME.overlay_badge_width,
+                    badge_width,
                     THEME.overlay_label_height,
                 ),
                 QColor(THEME.overlay_fill),
             )
             painter.setPen(QPen(QColor(THEME.overlay_text)))
-            painter.setFont(QFont(THEME.font_family, THEME.font_overlay))
+            painter.setFont(badge_font)
             painter.drawText(
                 QRectF(
                     video_rect.left(),
                     video_rect.top(),
-                    THEME.overlay_badge_width,
+                    badge_width,
                     THEME.overlay_label_height,
                 ),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -1185,7 +1242,6 @@ class MainWindow(QMainWindow):
         self.stream_fallbacks: dict[int, set[str]] = {}
         self.fallbacks: set[str] = set(self.prewarm_fallbacks)
         self.last_error: str | None = None
-        self.ticker_index = 0
         self.attract_index = SCENARIO_ORDER.index(self.scenario.id)
         self._last_rss_sample = 0.0
         self._build_ui()
@@ -1337,13 +1393,16 @@ class MainWindow(QMainWindow):
         header.addWidget(status_panel, 3)
         root.addLayout(header)
 
-        self.ticker_label = _label(
-            self.scenario.ticker[0],
-            size=16 if self.compact_layout else THEME.font_regular,
-            color=THEME.gpu,
-            bold=True,
+        # The rotating ticker line used to sit here. At booth distance it was the
+        # least useful row on the page and it cost vertical space the video needs:
+        # a 16:9 clip is height-limited inside the canvas, so every pixel removed
+        # below the header makes the picture itself bigger. The measured
+        # pipeline placement now occupies this slot instead.
+        self.stage_breakdown = StageBreakdown(
+            compact=self.compact_layout,
+            task_labels=self.task_labels,
         )
-        root.addWidget(self.ticker_label)
+        root.addWidget(self.stage_breakdown)
 
         main_row = QHBoxLayout()
         main_row.setSpacing(THEME.spacing_md)
@@ -1393,12 +1452,6 @@ class MainWindow(QMainWindow):
             THEME.spacing_sm,
             THEME.spacing_sm,
         )
-        tile_layout.addWidget(_label("LIVE STREAM TILES", bold=True))
-        self.stage_breakdown = StageBreakdown(
-            compact=self.compact_layout,
-            task_labels=self.task_labels,
-        )
-        tile_layout.addWidget(self.stage_breakdown)
         self.tile_grid = QGridLayout()
         self.tile_grid.setSpacing(THEME.spacing_sm)
         tile_layout.addLayout(self.tile_grid, 1)
@@ -1439,6 +1492,16 @@ class MainWindow(QMainWindow):
         self.bottom_panels = (tile_panel, metrics_panel)
         root.addLayout(bottom_row, 0)
         bottom_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        # At the default density of 1 the bottom row showed the main stream a
+        # second time in miniature, next to six metric tiles, and the video paid
+        # for all of it. Nothing below the pipeline placement earns its pixels at
+        # density 1, so the panels are hidden and the picture takes the height.
+        # They return the moment an operator raises the density, because then
+        # there are genuinely several streams to compare. Hiding the child
+        # widgets rather than the layout collapses the row: a QLayout has no
+        # visibility of its own.
+        for panel in self.bottom_panels:
+            panel.setVisible(self.policy_snapshot.density > 1)
         self.status_label = _label(
             f"1-{len(SCENARIO_ORDER)} scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
             color=THEME.text_muted,
@@ -1569,6 +1632,10 @@ class MainWindow(QMainWindow):
 
     def _layout_tiles(self) -> None:
         density = self.policy_snapshot.density
+        # Density 1 keeps the bottom row collapsed so the video owns the space;
+        # above 1 it returns to show the additional streams and the metrics.
+        for panel in self.bottom_panels:
+            panel.setVisible(density > 1)
         columns = min(density, 4)
         rows = (density + columns - 1) // columns
         maximum_height = (
@@ -1727,8 +1794,6 @@ class MainWindow(QMainWindow):
         self.attract_title.setText(self.scenario.title)
         self.attract_vertical.setText(self.scenario.vertical)
         self.attract_business.setText(self.scenario.business_line)
-        self.ticker_index = 0
-        self.ticker_label.setText(self.scenario.ticker[0])
         self.scenario_history.append(
             {"scenario": self.scenario.id, "at": time.time(), "reason": reason}
         )
@@ -1773,10 +1838,11 @@ class MainWindow(QMainWindow):
         )
 
     def _rotate_ticker(self) -> None:
-        if not self.scenario.ticker:
-            return
-        self.ticker_index = (self.ticker_index + 1) % len(self.scenario.ticker)
-        self.ticker_label.setText(self.scenario.ticker[self.ticker_index])
+        # The scenario ticker no longer has a widget on the demo page: its slot
+        # became the pipeline placement bar so the video could grow. The timer
+        # still fires because it doubles as a UI heartbeat, so this is a no-op
+        # rather than a removed call site.
+        return
 
     def _update_clock(self) -> None:
         # This timer is the UI thread's heartbeat for the hang watchdog: if it stops firing, the
@@ -2181,6 +2247,7 @@ class MainWindow(QMainWindow):
             "gauge_states": gauge_states,
             "latest_telemetry": latest_telemetry,
             "frame_samples": [asdict(item) for item in frames],
+            "video_geometry": self.main_canvas.video_geometry(),
             "telemetry_samples": [
                 {
                     "sampled_at": item.sampled_at,

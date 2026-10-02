@@ -29,7 +29,11 @@ class Theme:
     font_engine_value: int = 72
     font_title: int = 34
     font_badge: int = 18
-    font_overlay: int = 22
+    font_overlay: int = 18
+    # Descriptor drawn on each detection box ("vehicle 100% . car 30%"). Kept
+    # deliberately small: these sit on top of the video, and at booth distance a
+    # large label hides the very content the operator is meant to be looking at.
+    font_detection_label: int = 13
     attract_title_font: int = 72
     attract_subtitle_font: int = 36
     attract_business_font: int = 28
@@ -57,7 +61,10 @@ class Theme:
     gauge_bar_min: int = 8
     gauge_gap_min: int = 4
     gauge_value_line_ratio: float = 1.77
-    overlay_label_height: int = 30
+    # Row height for on-video overlay text (detection descriptors, zone names,
+    # the header badge and the event strip). Tracks font_detection_label so the
+    # rows pack tightly instead of overprinting the footage.
+    overlay_label_height: int = 18
     overlay_badge_width: int = 300
     overlay_border: int = 3
     minimum_window_width: int = 1280

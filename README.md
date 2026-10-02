@@ -27,7 +27,7 @@ declaration, or metric relabeling was added.
 ## Repository map
 
 - `app/main.py` — CLI, startup gate, scenario compiler, diagnostics, scheduled test actions.
-- `app/hud.py` — Qt booth UI, overlays, gauges, stream tiles, ticker, attract mode, F1 operator view.
+- `app/hud.py` - Qt booth UI, overlays, gauges, stream tiles, attract mode, F1 operator view.
 - `app/engine/device_policy.py` — modes, NPU/GPU toggles, density, and explicit round-robin placement.
 - `app/engine/availability.py` — model × device startup gate, `EXECUTION_DEVICES` validation, fingerprint cache.
 - `app/engine/pipelines.py` — seven scenario graphs, model registry, CPU preprocessing, and persistent stream workers.
@@ -326,7 +326,7 @@ The deterministic loop is the default. A camera is never used unless explicitly 
 | `Q` | Quit after confirmation; `Esc` exits immediately |
 
 Scenario switches are in-process. Workers retain compiled model stores and per-scenario
-`AsyncInferQueue` caches, while the video clock, overlay, zones, ticker, and event rules switch
+`AsyncInferQueue` caches, while the video clock, overlay, zones, and event rules switch
 without a process reload. A placement transition is acknowledged only after every active worker
 reports its new `EXECUTION_DEVICES` payload.
 

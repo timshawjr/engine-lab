@@ -798,3 +798,59 @@ warehouse workers `mtn_dew`. Two checks now prevent that:
 It cannot say *which* item of PPE is worn, and it has never observed a violation, because no clip in
 the library contains a non-compliant worker. The tile confirms compliance; it does not police it. Both
 limits are stated in `README.md` and in the vocabulary's own comment so the claim cannot drift.
+## HUD layout - video legibility at booth distance
+
+The picture was too small to read. Three changes, all verified by measuring the
+rect the image is actually drawn into rather than by looking at a screenshot.
+
+### What moved
+
+1. **The rotating ticker line is gone.** Its slot in the header now holds the
+   measured `PIPELINE PLACEMENT - duration share` bar, which was previously buried
+   below the video.
+2. **The whole bottom row is hidden at density 1** - the miniature copy of the
+   main stream plus the six metric tiles. It returns the moment an operator
+   raises the density, because above 1 there are genuinely several streams to
+   compare. Verified: `--density 2` brings both stream tiles and the metric grid
+   back, and shows per-stream round-robin placement (stream 0 detector on NPU,
+   stream 1 on GPU.0) at 1089 det/s.
+3. **On-video descriptors are much smaller.** A new `font_detection_label` token
+   (13) replaces the 22pt overlay font for detection boxes and zone names, and
+   `overlay_label_height` drops 30 -> 18 so rows pack instead of smearing. The
+   header badge and event strip use `font_overlay`, reduced 22 -> 18.
+
+### Measured result
+
+`FrameCanvas.video_geometry()` reports the drawn rect, and a 16:9 clip inside this
+canvas is height-limited, so reclaiming vertical space is the only thing that
+enlarges it:
+
+| | canvas | video | picture area |
+|---|---|---|---|
+| before | 1101x230 | 409x230 | 94,044 px2 |
+| after | 1101x482 | **857x482** | **413,020 px2** |
+
+**4.4x the picture area**, from the same 1101px width. Width was never the
+constraint; height was, which is why the bottom row had to go rather than being
+narrowed.
+
+Two measurement mistakes are worth recording, because both produced a wrong
+number first: judging the size by eye from a screenshot, and then trying to
+automate it with a brightness threshold over the left panel - which measured the
+bright *placement bar* as footage and reported the change as negative. The
+baseline above was produced by adding only the instrumentation to the committed
+layout and running it for real.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 94 tests ... OK` (exit 0; +4 new layout tests) |
+| `python -m app.main --selftest` | `11 PASS, 0 FAIL` (exit 0) |
+| `python tools/verify_sources.py` | `48 PASS, 0 FAIL` (exit 0) |
+| `python tools/preflight.py` | `107 PASS, 0 WARN, 0 FAIL` (exit 0) |
+
+`tests/test_layout.py` pins the fitted-size arithmetic, the new font tokens and
+the seven-scenario key map, so the picture cannot silently shrink again. It
+asserts the pure function rather than instantiating `FrameCanvas`, because
+building a QWidget needs a QApplication and no other test in the suite does that.
