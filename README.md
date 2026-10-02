@@ -125,8 +125,39 @@ Rebuild with:
 ```cmd
 <dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario retail
 <dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario metro
+<dev-venv>\Scripts\python tools\build_clip_zero_shot.py --scenario manufacturing
 .venv\Scripts\python tools\convert_clip_onnx.py --fp16
 ```
+
+`tools\preflight.py` fails if a scenario declares a vocabulary whose baked pair is missing or stale.
+That check is not ceremony: the loader falls back to the default pair when a named one is absent, and
+the default is the retail grocery list, so an unbaked manufacturing tile would put `mtn_dew` on a
+warehouse worker.
+
+### PPE compliance (manufacturing only)
+
+The manufacturing tile asks one bounded question of CLIP — `ppe_worn` or `no_ppe` — over
+head-and-shoulder crops of the person detections. Measured on the shipped footage:
+
+| Clip | Ground truth | Correct | Label changes |
+|---|---|---:|---:|
+| `mfg-warehouse-ppe-1080p.mp4` (in the demo) | PPE worn | 60/60 | 0 |
+| `mfg-corridor-hardhats-720p.mp4` | PPE worn | 60/60 | 0 |
+| `edu-campus-walking-720p.mp4` | no PPE | 60/60 | 0 |
+| `store-aisle-detection.mp4` | no PPE | 44/49 | 10 |
+
+In the live pipeline a 25 s run produced **515 classifications, every one of them `ppe_worn`, with
+zero label changes** — no false positives on a clip where both workers are in hi-vis and hard hats.
+
+Two things this does **not** do, and must not be claimed to do: it cannot say *which* item of PPE is
+worn, and it has never observed a violation, because no clip in the library contains a
+non-compliant worker. It confirms compliance; it does not police it.
+
+A five-way garment vocabulary was tried first and rejected. It was semantically correct — every read
+was a label the workers genuinely had — but it flipped between `hard_hat` and `safety_vest` 19 times
+in 60 sampled frames, which is the same instability that got the ImageNet stage removed. Restricting
+the crop to the head and shoulders is what made the read stable. Retail keeps full-box crops,
+because a product *is* the whole box.
 
 Each vertical that uses CLIP declares its vocabulary by name on the
 `product_classifier` stage in `config/scenarios.json` (`"vocabulary": "retail"`,
@@ -193,7 +224,7 @@ The seven graphs are:
 |---:|---|---|---|
 | `1` | Retail | `retail-checkout.mp4` | `product-detection-0001` on the NPU → CLIP names the item from a declared store vocabulary on the GPU → shelf/zone events on the CPU |
 | `2` | Metro | `smart-city-traffic-montage.mp4` | crossroad-1016 vehicle/pedestrian detection on the NPU → lane/zone counts on the CPU (detector class is the business answer; no weak classifier) |
-| `3` | Manufacturing | `mfg-warehouse-ppe-1080p.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → zone-occupancy counting on the CPU |
+| `3` | Manufacturing | `mfg-warehouse-ppe-1080p.mp4` | crossroad-1016 people-and-vehicles detection on the NPU → worker presence on the GPU → PPE compliance check with zero-shot CLIP on the GPU → zone-occupancy counting on the CPU |
 | `4` | Robotics | `robot-cell-workers-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → approach-zone breach events on the CPU |
 | `5` | Education | `edu-campus-walking-720p.mp4` | crossroad-1016 detection on the NPU → person detection on the GPU → pose estimation on the NPU → attendance/posture events on the CPU |
 | `6` | Health and Life Sciences | `medical-eldercare.mp4` | person detection on the GPU → pose heatmap/PAF decoding on the NPU → posture/zone events on the CPU |
@@ -214,7 +245,7 @@ The seven verticals follow the [Open Edge Platform](https://github.com/open-edge
 |---|---|---|---|
 | Retail | `retail` | Shelf-side product detection and naming on the store footage | 0.83 det/frame, 17 tracks |
 | Metro | `metro` | Intersection vehicle and pedestrian counting on the traffic montage | 34.7 det/frame, 530 tracks |
-| Manufacturing | `manufacturing` | Warehouse workers in hi-vis and hard hats, zone occupancy | 4.28 det/frame, 36 tracks, 0 empty frames |
+| Manufacturing | `manufacturing` | Warehouse workers in hi-vis and hard hats, PPE compliance, zone occupancy | 4.25 det/frame, 40 tracks, 0 empty frames |
 | Robotics | `robotics` | Robot cell with workers behind safety fencing, zone-breach events | 3.51 det/frame, 245 tracks, 2.8% empty frames |
 | Education | `education` | Campus presence plus on-device pose for posture/attendance | 9.53 det/frame, 36 tracks, 0 empty frames |
 | Health and Life Sciences | `health` | Pose estimation and posture monitoring on the eldercare footage | 2.47 det/frame, 22 tracks |

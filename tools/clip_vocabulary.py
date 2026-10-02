@@ -65,6 +65,35 @@ VOCABULARIES: dict[str, dict[str, tuple[str, ...]]] = {
             "a bag of corn chips",
         ),
     },
+    "manufacturing": {
+        # A binary compliance question, not a catalogue of garments. A five-way
+        # PPE vocabulary was measured first and rejected: on
+        # mfg-warehouse-ppe-1080p.mp4 it was semantically right (every read was
+        # a label the workers genuinely had) but flipped between `hard_hat` and
+        # `safety_vest` 19 times in 60 sampled frames, which is the same
+        # instability that got the ImageNet stage removed. Full-body crops also
+        # failed to discriminate at all - ordinary shoppers with no PPE were
+        # read as `work_overalls` 65% of the time.
+        #
+        # The binary form is stable and separates both ways, on head/shoulder
+        # crops: 60/60 correct with 0 label changes on the warehouse workers and
+        # on the corridor worker, 60/60 correct with 0 changes on campus students
+        # wearing no PPE, and 44/49 on store shoppers, the hardest case.
+        #
+        # What this does NOT do, and must not be claimed to do: say *which* item
+        # is worn, or detect a violation. No clip in the library contains a
+        # non-compliant worker, so a violation has never been observed.
+        "ppe_worn": (
+            "a worker wearing a hard hat and a high visibility vest",
+            "a person on a factory floor in protective equipment",
+            "site personnel wearing safety gear",
+        ),
+        "no_ppe": (
+            "a member of the public with no protective equipment",
+            "a person in ordinary clothes indoors",
+            "a shopper or passer-by not wearing safety gear",
+        ),
+    },
     "metro": {
         # The intersection clip is a top-down view, so each category carries one
         # overhead phrasing alongside a plain one. Measured on the vehicle crops

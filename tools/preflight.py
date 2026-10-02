@@ -743,6 +743,18 @@ def _phase3_scenario_checks(
             if fallback_devices:
                 detail += "; explicit CPU fallback=" + ",".join(fallback_devices)
             report.add("phase 3 scenario", scenario.id, "PASS", detail)
+
+            # A stage that declares a vocabulary must have its own baked pair.
+            # load_zero_shot_vocabulary() falls back to the default pair when a
+            # named one is missing, which for a scenario whose default is the
+            # retail grocery list would put "mtn_dew" on a warehouse worker. The
+            # bake artifacts are gitignored, so this catches a machine that was
+            # never provisioned, and a bake that is stale relative to
+            # tools/clip_vocabulary.py.
+            for stage in scenario.stages:
+                if not stage.vocabulary:
+                    continue
+                _vocabulary_bake_check(report, scenario.id, stage)
         except Exception as exc:
             report.add(
                 "phase 3 scenario",
@@ -751,6 +763,49 @@ def _phase3_scenario_checks(
                 f"{type(exc).__name__}: {exc}",
                 "Restore the scenario graph and its verified models/media; never hide fallback",
             )
+
+
+def _vocabulary_bake_check(report: Preflight, scenario_id: str, stage: object) -> None:
+    name = str(getattr(stage, "vocabulary", ""))
+    model_dir = ROOT / "models" / stage.model_id
+    index = model_dir / f"vocabulary_{name}.json"
+    embeddings = model_dir / f"text_embeddings_{name}.npy"
+    row = f"{scenario_id}:{stage.stage} vocabulary {name}"
+    if not index.is_file() or not embeddings.is_file():
+        report.add(
+            "phase 3 vocabulary",
+            row,
+            "FAIL",
+            f"baked pair missing ({index.name}, {embeddings.name})",
+            "Rebuild with <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py "
+            f"--scenario {name}; without it the stage silently falls back to the "
+            "default vocabulary and shows the wrong labels",
+        )
+        return
+    baked = json.loads(index.read_text(encoding="utf-8"))
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        from clip_vocabulary import VOCABULARIES
+    finally:
+        sys.path.pop(0)
+    expected = list(VOCABULARIES.get(name, {}))
+    actual = list(baked.get("labels", []))
+    if expected != actual:
+        report.add(
+            "phase 3 vocabulary",
+            row,
+            "FAIL",
+            f"baked labels {actual} do not match tools/clip_vocabulary.py {expected}",
+            f"Rebuild with <dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py "
+            f"--scenario {name}",
+        )
+        return
+    report.add(
+        "phase 3 vocabulary",
+        row,
+        "PASS",
+        f"baked pair present; labels={actual}",
+    )
 
 
 def _phase3_delivery_checks(report: Preflight) -> None:

@@ -18,6 +18,60 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VocabularyDeclarationTests(unittest.TestCase):
+    def test_manufacturing_vocabulary_is_a_binary_compliance_question(self):
+        """PPE is asked as compliant / not compliant, never as a garment list.
+
+        A five-way vocabulary (hard_hat, safety_vest, work_overalls,
+        safety_gloves, plain_clothes) measured 19 label changes in 60 sampled
+        frames on the warehouse clip, which is the instability that got the
+        ImageNet stage removed. The binary form measured 0 changes and 60/60
+        correct. The test exists so a garment list cannot be reintroduced.
+        """
+        labels = set(VOCABULARIES["manufacturing"])
+        self.assertEqual(labels, {"ppe_worn", "no_ppe"})
+        for garment in ("hard_hat", "safety_vest", "work_overalls", "safety_gloves"):
+            self.assertNotIn(garment, labels)
+
+    def test_every_declared_scenario_vocabulary_is_baked_and_current(self):
+        """A stage that declares a vocabulary needs its own baked pair.
+
+        load_zero_shot_vocabulary() falls back to the default pair when a named
+        one is missing, and the default is the retail grocery list. Without this
+        check a machine that never ran the bake would put "mtn_dew" on a
+        warehouse worker. The artifacts are gitignored, so this is a real
+        provisioning check, not a formality.
+        """
+        catalog = load_scenario_catalog(
+            ROOT / "config" / "scenarios.json",
+            ROOT / "config" / "models.json",
+            ROOT / "media",
+        )
+        checked = 0
+        for scenario in catalog.values():
+            for stage in scenario.stages:
+                if not stage.vocabulary:
+                    continue
+                checked += 1
+                name = stage.vocabulary
+                model_dir = ROOT / "models" / stage.model_id
+                index = model_dir / f"vocabulary_{name}.json"
+                embeddings = model_dir / f"text_embeddings_{name}.npy"
+                self.assertTrue(
+                    index.is_file(),
+                    f"{scenario.id}:{stage.stage} missing {index.name}; rebuild with "
+                    f"<dev-venv>\\Scripts\\python tools\\build_clip_zero_shot.py "
+                    f"--scenario {name}",
+                )
+                self.assertTrue(embeddings.is_file(), f"missing {embeddings.name}")
+                baked = json.loads(index.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    list(baked.get("labels", [])),
+                    list(VOCABULARIES[name]),
+                    f"{name} bake is stale relative to tools/clip_vocabulary.py; "
+                    "rebuild it",
+                )
+        self.assertGreater(checked, 0, "no scenario declares a vocabulary")
+
     def test_retail_vocabulary_names_groceries(self):
         labels = set(VOCABULARIES["retail"])
         self.assertIn("bananas", labels)
@@ -121,7 +175,7 @@ class ScenarioVocabularyWiringTests(unittest.TestCase):
             for stage in scenario.stages
             if stage.model_id == "clip-vision-patch32"
         }
-        self.assertEqual(declared, {"retail", "metro"})
+        self.assertEqual(declared, {"retail", "metro", "manufacturing"})
         for name in declared:
             self.assertIn(name, VOCABULARIES)
 

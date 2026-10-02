@@ -16,8 +16,10 @@ Three gates make whatever survives defensible:
    to repeat for ``classify_min_frames`` consecutive frames on one track before
    it is displayed or emitted as an event.
 
-``person`` is hard-banned in code for every scenario: an ImageNet label for a
-person crop is always noise, regardless of configuration.
+``person`` is hard-banned in code for the ImageNet classifier on every scenario: an
+ImageNet label for a person crop is always noise, regardless of configuration. The
+zero-shot CLIP stage opts out of that ban explicitly, because its output is bounded
+by a declared vocabulary rather than by 1000 unrelated ImageNet classes.
 
 A surviving label is still only an ImageNet candidate. It is never an
 authoritative product, SKU, or vehicle identity.
@@ -29,8 +31,15 @@ from collections.abc import Iterable, Mapping
 
 from app.engine.stages import Detection
 
-#: Detector classes that are never submitted to the classifier. Configuration
+#: Detector classes that the *ImageNet* classifier may never see. Configuration
 #: cannot re-enable these; an ImageNet label for a person crop is always noise.
+#:
+#: This ban is specific to the ImageNet path. The zero-shot CLIP stage is a
+#: different mechanism: its output is bounded by an operator-declared vocabulary
+#: rather than drawn from 1000 unrelated ImageNet classes, so a declared
+#: question about a person crop ("is this worker wearing PPE?") is answerable.
+#: The manufacturing tile depends on that distinction, and the zero-shot stage
+#: opts in explicitly via ``allow_person_labels``.
 NEVER_CLASSIFY: frozenset[str] = frozenset({"person"})
 
 
@@ -41,6 +50,7 @@ def classification_candidates(
     top_k: int,
     detector_labels: Iterable[str],
     min_crop_pixels: float = 0.0,
+    allow_person_labels: bool = False,
 ) -> tuple[Detection, ...]:
     """Return the detections allowed to reach the classifier stage.
 
@@ -52,6 +62,11 @@ def classification_candidates(
     ``min_crop_pixels`` rejects boxes too small to name. A crop is upsampled to
     the classifier's fixed input, so a handful of pixels carries no recoverable
     detail and only produces a confident guess.
+
+    ``allow_person_labels`` lifts the ImageNet person ban for a zero-shot stage
+    whose vocabulary the operator declared for exactly this purpose. It defaults
+    to off, so the ImageNet path keeps the ban no matter what a scenario asks
+    for.
     """
 
     allowed = {value.strip().lower() for value in detector_labels}
@@ -62,7 +77,7 @@ def classification_candidates(
         and detection.width >= 1.0
         and detection.height >= 1.0
         and min(detection.width, detection.height) >= min_crop_pixels
-        and detection.label.lower() not in NEVER_CLASSIFY
+        and (allow_person_labels or detection.label.lower() not in NEVER_CLASSIFY)
         and detection.label.lower() in allowed
     )
     return tuple(sorted(eligible, key=lambda item: item.confidence, reverse=True)[:top_k])

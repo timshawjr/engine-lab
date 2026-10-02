@@ -211,6 +211,12 @@
           "device_pref": "GPU"
         },
         {
+          "stage": "product_classifier",
+          "model_id": "clip-vision-patch32",
+          "device_pref": "GPU",
+          "vocabulary": "manufacturing"
+        },
+        {
           "stage": "zone_event",
           "model_id": "person-vehicle-bike-detection-crossroad-1016",
           "device_pref": "CPU"
@@ -259,11 +265,26 @@
         "max_track_misses": 12,
         "count_dwell_s": 0.4,
         "track_persist_s": 1.0,
-        "event_cooldown_s": 1.0
+        "event_cooldown_s": 1.0,
+        "classify_detector_labels": [
+          "person"
+        ],
+        "classify_top_k": 1,
+        "zero_shot_min": 0.22,
+        "classify_min_frames": 3,
+        "classify_min_crop_px": 64,
+        "classify_crop": "head",
+        "classify_head_fraction": 0.38,
+        "classify_head_widen": 1.3,
+        "business_event_labels": [
+          "ppe_worn",
+          "no_ppe"
+        ]
       },
       "ticker": [
         "Detect people and vehicles on the warehouse floor",
         "Confirm worker presence on the GPU",
+        "Check PPE compliance on-device",
         "Count zone occupancy on the CPU",
         "No server round-trip"
       ]

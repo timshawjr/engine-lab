@@ -91,7 +91,7 @@ class ScenarioCatalogTests(unittest.TestCase):
                 self.assertLessEqual(y + height, 1.0)
 
     def test_classifier_never_submits_person(self) -> None:
-        """An ImageNet or vocabulary label for a person crop is always noise."""
+        """An ImageNet label for a person crop is always noise."""
         detections = (
             Detection(100.0, 50.0, 300.0, 380.0, "person", 0.95),
             Detection(500.0, 120.0, 560.0, 180.0, "bowl", 0.80),
@@ -104,6 +104,33 @@ class ScenarioCatalogTests(unittest.TestCase):
         )
         self.assertEqual([item.label for item in selected], ["bowl"])
         self.assertNotIn("person", {item.label for item in selected})
+
+    def test_zero_shot_may_submit_person_but_imagenet_may_not(self) -> None:
+        """The person ban is scoped to the ImageNet path, not to a declared
+        zero-shot vocabulary.
+
+        The manufacturing PPE check can only exist because a person crop is
+        allowed to reach a stage whose vocabulary the operator declared. The
+        ImageNet path must keep the ban even when a scenario asks for it, and
+        even when the allowlist names person.
+        """
+        detections = (Detection(100.0, 50.0, 300.0, 380.0, "person", 0.95),)
+        zero_shot = classification_candidates(
+            detections,
+            confidence_min=0.3,
+            top_k=1,
+            detector_labels=("person",),
+            allow_person_labels=True,
+        )
+        self.assertEqual([item.label for item in zero_shot], ["person"])
+        imagenet = classification_candidates(
+            detections,
+            confidence_min=0.3,
+            top_k=1,
+            detector_labels=("person",),
+            allow_person_labels=False,
+        )
+        self.assertEqual(imagenet, ())
 
     def test_classifier_allowlist_fails_closed(self) -> None:
         """An unlisted detector class is never submitted.
@@ -222,7 +249,7 @@ class ScenarioCatalogTests(unittest.TestCase):
                 for s in self.catalog.values()
                 if "product_classifier" in {x.stage for x in s.stages}
             ],
-            ["retail", "metro"],
+            ["retail", "metro", "manufacturing"],
         )
 
     def test_classifier_gates_are_configured_on_every_scenario(self) -> None:
@@ -237,8 +264,9 @@ class ScenarioCatalogTests(unittest.TestCase):
             # person is banned from the ImageNet classifier path in code
             # (app/scenarios/retail.py), but metro runs the zero-shot CLIP
             # stage, whose declared vocabulary carries a "person" entry for the
-            # montage's crosswalks.
-            if scenario.id != "metro":
+            # montage's crosswalks, and manufacturing runs it over person crops
+            # to answer the PPE compliance question.
+            if scenario.id not in {"metro", "manufacturing"}:
                 self.assertNotIn("person", rules["classify_detector_labels"])
             self.assertIn("zero_shot_min", rules)
             self.assertGreater(float(rules["zero_shot_min"]), 0.0)
@@ -461,13 +489,15 @@ class ScenarioCatalogTests(unittest.TestCase):
 
     def test_manufacturing_detects_people_and_vehicles_on_three_engines(self) -> None:
         """Manufacturing runs crossroad detection on the NPU, worker presence
-        on the GPU, and zone-occupancy counting on the CPU.
+        on the GPU, a PPE compliance check on the GPU, and zone-occupancy
+        counting on the CPU.
 
-        The store-aisle footage is genuinely sparse (2.9 person/frame in
-        screening), so the scenario makes no CLIP claim: a PPE vocabulary was
-        measured on this footage and named ordinary shoppers as "safety vest"
-        (52/96 crops) and "hard hat" (27/96) at a mean top-1 score of 0.238,
-        which is noise, not PPE detection.
+        The PPE stage was added only after it was measured. A five-way garment
+        vocabulary was rejected first: it was semantically right but flipped
+        between `hard_hat` and `safety_vest` 19 times in 60 sampled frames.
+        The binary compliance vocabulary on head/shoulder crops measured 60/60
+        correct with 0 label changes on this footage, and 60/60 correct with 0
+        changes on campus students wearing no PPE, so it separates both ways.
         """
         stages = {stage.stage: stage for stage in self.catalog["manufacturing"].stages}
         self.assertEqual(stages["detector"].model_id, "person-vehicle-bike-detection-crossroad-1016")
@@ -475,12 +505,22 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
         self.assertEqual(stages["person_detector"].device_pref, "GPU")
         self.assertEqual(stages["zone_event"].device_pref, "CPU")
-        # No CLIP stage: the PPE vocabulary measured as noise on this footage.
-        self.assertNotIn("product_classifier", stages)
+        classifier = stages["product_classifier"]
+        self.assertEqual(classifier.model_id, "clip-vision-patch32")
+        self.assertEqual(classifier.device_pref, "GPU")
+        self.assertEqual(classifier.vocabulary, "manufacturing")
         rules = self.catalog["manufacturing"].event_rules
-        self.assertNotIn("classify_detector_labels", rules)
-        self.assertNotIn("zero_shot_min", rules)
+        self.assertIn("classify_detector_labels", rules)
+        self.assertIn("zero_shot_min", rules)
         self.assertIn("count_dwell_s", rules)
+        # The crop geometry is declared, not hardcoded, and head crops are what
+        # made the read stable.
+        self.assertEqual(rules["classify_crop"], "head")
+        self.assertGreater(float(rules["classify_head_fraction"]), 0.0)
+        self.assertLess(float(rules["classify_head_fraction"]), 1.0)
+        self.assertEqual(
+            set(rules["business_event_labels"]), {"ppe_worn", "no_ppe"}
+        )
 
     def test_robotics_detects_people_on_three_engines(self) -> None:
         """Robotics runs crossroad detection on the NPU, worker presence on the
@@ -491,6 +531,9 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(stages["person_detector"].model_id, "person-detection-retail-0013")
         self.assertEqual(stages["person_detector"].device_pref, "GPU")
         self.assertEqual(stages["zone_event"].device_pref, "CPU")
+        # Robotics stays classifier-free: its workers are behind safety fencing
+        # and the person model only sees them in 13 of 40 sampled frames, so
+        # there is no crop stable enough to submit.
         self.assertNotIn("product_classifier", stages)
         rules = self.catalog["robotics"].event_rules
         self.assertNotIn("classify_detector_labels", rules)

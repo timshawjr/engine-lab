@@ -31,6 +31,7 @@ from app.engine.stages import (
     Keypoint,
     ModelInputSpec,
     crop_detection,
+    crop_detection_head,
     decode_pose,
     load_labels,
     load_preprocess_config,
@@ -894,6 +895,10 @@ class ScenarioStreamWorker(QThread):
             top_k=top_k,
             detector_labels=rules.get("classify_detector_labels", ()),
             min_crop_pixels=min_crop,
+            # A zero-shot vocabulary is declared by the operator for this exact
+            # scene, so a person crop is a legitimate question here ("is this
+            # worker in PPE?"). The ImageNet path keeps the ban.
+            allow_person_labels=True,
         )
         if not candidates:
             return detections, _idle_stage_metric(assignment, runner, 0, 0)
@@ -909,6 +914,9 @@ class ScenarioStreamWorker(QThread):
         embeddings, labels, template_counts = self._zero_shot_vocabulary(
             assignment.model_id, bundle, name=vocabulary_name
         )
+        crop_mode = str(rules.get("classify_crop", "box")).lower()
+        head_fraction = float(rules.get("classify_head_fraction", 0.38))
+        head_widen = float(rules.get("classify_head_widen", 1.3))
         classified = list(detections)
         classified_by_id = {id(item): index for index, item in enumerate(classified)}
         preprocess_ms = 0.0
@@ -916,7 +924,14 @@ class ScenarioStreamWorker(QThread):
         classified_count = 0
         postprocess_started = time.perf_counter()
         for candidate in candidates:
-            crop = crop_detection(frame, candidate)
+            if crop_mode == "head":
+                crop = crop_detection_head(
+                    frame, candidate, head_fraction, head_widen
+                )
+            else:
+                crop = crop_detection(frame, candidate)
+            if crop.size == 0:
+                continue
             started = time.perf_counter()
             tensor = preprocess_clip(crop)
             preprocess_ms += (time.perf_counter() - started) * 1000.0

@@ -610,6 +610,9 @@ into the committed folder and the reviewed `sha256`:
 
 CLIP PPE naming on the warehouse clip remains untested: `torch` is not in the pinned venv, and adding
 a dependency needs a decision. The manufacturing tile ships with no classifier and makes no PPE claim.
+*(Superseded — see "PPE compliance check (manufacturing)" below. The dependency was authorised, the
+text tower was built in a separate dev venv, and a binary compliance question shipped after a
+five-way garment vocabulary was measured and rejected.)*
 
 
 ## GPU-off fallback fix
@@ -694,3 +697,104 @@ make the mode label untrue. It is recorded here rather than silently changed.
 
 
 
+
+## PPE compliance check (manufacturing)
+
+Authorised later, and investigated rather than assumed. `torch`/`transformers` are deliberately
+absent from `requirements.txt`, so the text tower was built in a **separate** dev venv
+(`torch 2.14.1+cpu`, `transformers 4.57.6` - pinned below 5.0 because the repo build tool is written
+against the 4.x `get_text_features` API, which returns a tensor rather than an output object). The
+production `.venv` was not modified.
+
+### What was tried and rejected first
+
+A five-way garment vocabulary (`safety_vest`, `hard_hat`, `work_overalls`, `safety_gloves`,
+`plain_clothes`) on full-body crops:
+
+| Clip | Truth | Result |
+|---|---|---|
+| `mfg-warehouse-ppe-1080p.mp4` | vest + hard hat | safety_vest 50%, work_overalls 45%, gloves 5% |
+| `mfg-corridor-hardhats-720p.mp4` | overalls + hard hat | work_overalls 95%, hard_hat 5% |
+| `store-aisle-detection.mp4` (control) | **no PPE at all** | **work_overalls 65%**, plain_clothes 35% |
+
+The control decides it: shoppers wearing no PPE were read as `work_overalls` 65% of the time, so the
+label was an attractor for "a person in a scene", not a clothing read.
+
+Switching to head-and-shoulder crops (top 38% of the box, widened to 1.3x) made the five-way
+vocabulary *semantically* correct on the warehouse clip - every read was a label the workers genuinely
+had - but it still flipped between `hard_hat` and `safety_vest` **19 times in 60 sampled frames**. For
+comparison the retail vocabulary, which does work, changes label 2 times in 20 labelled frames. That
+instability is the same defect that got the ImageNet stage removed, so the five-way vocabulary was not
+shipped.
+
+### What shipped: a binary compliance question
+
+`ppe_worn` / `no_ppe` on head/shoulder crops, 60 sampled frames per clip:
+
+| Clip | Truth | Head crops | Full-body crops |
+|---|---|---|---|
+| `mfg-warehouse-ppe-1080p.mp4` | PPE worn | **60/60, 0 changes** | 59/59, 0 changes |
+| `mfg-corridor-hardhats-720p.mp4` | PPE worn | **60/60, 0 changes** | 51/57, 8 changes |
+| `edu-campus-walking-720p.mp4` | no PPE | **60/60, 0 changes** | 60/60, 0 changes |
+| `store-aisle-detection.mp4` | no PPE | 44/49, 10 changes | 49/50, 2 changes |
+
+A binary decision is far more stable than a five-way argmax, and it separates both ways: the
+warehouse and corridor workers read `ppe_worn`, the campus students read `no_ppe`. Store shoppers are
+the hardest case at 90% - indoor retail lighting, people in coats.
+
+### In the live pipeline
+
+25 s, `tools\review_sessions.py --scenario manufacturing`:
+
+- 4.25 detections/frame, 40 tracks, **0 stream errors**
+- **515 classifications, all `ppe_worn`, 0 `no_ppe`** - no false positives on a clip where both
+  workers wear hi-vis and hard hats
+- **0 classification changes** across every track
+- 11 of 40 tracks were named; the rest never sustained `classify_min_frames` consecutive qualifying
+  frames, so the stage stays silent rather than guessing
+- CLIP stage placed on `EXECUTION_DEVICES=['GPU.0']` with `inference_count: 1` per frame
+- Screenshot `logs/ppe-manufacturing.png` shows `person 100% . ppe_worn 33% . #13` on the overlay,
+  118.7 det/s at 25.0 FPS
+
+### One real code change was needed, and it was previously a latent bug
+
+`classification_candidates()` hard-banned `person` crops for every classifier, on the reasoning that
+an ImageNet label for a person crop is always noise. That reasoning is sound for ImageNet but it also
+silently applied to the zero-shot stage, whose output is bounded by an operator-declared vocabulary
+instead of 1000 unrelated classes. Consequences:
+
+- `metro` declares `classify_detector_labels: ["vehicle", "person"]` and carries a `person` entry in
+  its vocabulary, and **not one of its person crops was ever classified**. Nothing failed; the
+  declaration was simply inert.
+- The manufacturing PPE check could not run at all until this was fixed.
+
+The ban is now scoped: `allow_person_labels` defaults to off, so the ImageNet path keeps it no matter
+what a scenario asks for, and only `_run_zero_shot()` opts in. Both directions are covered by
+`test_zero_shot_may_submit_person_but_imagenet_may_not`.
+
+### Guard against the silent-wrong-vocabulary failure
+
+The bake artifacts are gitignored, and `load_zero_shot_vocabulary()` falls back to the **default**
+(retail grocery) pair when a named pair is missing. An unbaked manufacturing tile would therefore name
+warehouse workers `mtn_dew`. Two checks now prevent that:
+
+- `tools\preflight.py` gained a `phase 3 vocabulary` row per declared stage, failing when the baked
+  pair is absent **or stale** relative to `tools/clip_vocabulary.py`, with the rebuild command as
+  remediation. Three rows are reported.
+- `tests/test_vocabulary.py::test_every_declared_scenario_vocabulary_is_baked_and_current` asserts
+  the same invariant for every scenario that declares a vocabulary.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 90 tests ... OK` (exit 0; was 87) |
+| `python -m app.main --selftest` | `11 PASS, 0 FAIL` (exit 0); "7 ordered scenarios, 24 stages" |
+| `python tools/verify_sources.py` | `48 PASS, 0 FAIL` (exit 0) |
+| `python tools/preflight.py` | `107 PASS, 0 WARN, 0 FAIL` (exit 0; was 104 - three vocabulary rows) |
+
+### What this does not claim
+
+It cannot say *which* item of PPE is worn, and it has never observed a violation, because no clip in
+the library contains a non-compliant worker. The tile confirms compliance; it does not police it. Both
+limits are stated in `README.md` and in the vocabulary's own comment so the claim cannot drift.
