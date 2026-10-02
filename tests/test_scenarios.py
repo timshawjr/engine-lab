@@ -292,6 +292,71 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(assignments["person_detector"].requested_device, "CPU")
         self.assertEqual(assignments["pose"].requested_device, "CPU")
 
+    def test_gpu_off_never_parks_a_npu_blind_model_on_the_npu(self) -> None:
+        """person-detection-retail-0013 compiles on the NPU and reports
+        EXECUTION_DEVICES=['NPU'], but emits no boxes there: measured 0
+        detections against 78 on GPU and 78 on CPU over the same 30 frames of
+        media/medical-eldercare.mp4.
+
+        The GPU-off fallback used to hand this stage to the NPU, which is the
+        one device where it is blind, so the tile went empty. The fallback has
+        to skip the NPU for this model and use the CPU, which measures
+        identical to the GPU.
+        """
+        person_stage = {
+            "health": "person_detector",
+            "manufacturing": "person_detector",
+            "robotics": "person_detector",
+            "education": "person_detector",
+            "federal": "perimeter_detector",
+        }
+        for mode in (DeviceMode.SPREAD, DeviceMode.SPLIT):
+            for scenario_id, stage_name in person_stage.items():
+                with self.subTest(mode=mode.value, scenario=scenario_id):
+                    policy = DevicePolicy(mode=mode, density=1)
+                    policy.gpu_enabled = False
+                    assignments = {
+                        item.stage: item
+                        for item in build_stage_assignments(
+                            policy, self.catalog[scenario_id], 0
+                        )
+                    }
+                    person = assignments[stage_name]
+                    self.assertNotEqual(person.requested_device, "NPU")
+                    self.assertEqual(person.requested_device, "CPU")
+                # Where the fallback is explicit, the stage still records that
+                # it wanted the GPU. (federal's perimeter detector is reached
+                # through round-robin, which never recorded a GPU intent.)
+                if scenario_id != "federal":
+                    self.assertEqual(person.intended_device, "GPU")
+
+    def test_npu_blind_fact_is_recorded_in_verified_config(self) -> None:
+        """The NPU-blind fact is measured data, so it belongs in
+        config/models.json with its evidence, not in a hardcoded set in code."""
+        models = json.loads(
+            (ROOT / "config" / "models.json").read_text(encoding="utf-8")
+        )
+        entry = next(
+            item
+            for item in models["models"]
+            if item["id"] == "person-detection-retail-0013"
+        )
+        blind = entry["no_usable_output_on"]
+        self.assertIn("NPU", blind)
+        self.assertTrue(blind["NPU"].strip(), "evidence string must not be empty")
+        # Every other device must stay unlisted, or the model would lose a
+        # working placement.
+        for other in ("GPU", "CPU"):
+            self.assertNotIn(other, blind)
+
+    def test_catalog_propagates_the_blind_device_to_the_stage(self) -> None:
+        stages = {
+            stage.stage: stage for stage in self.catalog["health"].stages
+        }
+        self.assertIn("NPU", stages["person_detector"].unusable_devices)
+        # A model that works everywhere must not be restricted.
+        self.assertEqual(stages["pose"].unusable_devices, frozenset())
+
     def test_split_and_disabled_preference_fallback(self) -> None:
         policy = DevicePolicy(mode=DeviceMode.SPLIT)
         health = self.catalog["health"]
@@ -302,13 +367,15 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(assignments["person_detector"].requested_device, "GPU")
         self.assertEqual(assignments["pose"].requested_device, "NPU")
         # With the GPU off, a GPU-preferred stage moves to the NPU and records
-        # what it originally asked for.
+        # what it originally asked for -- unless the model is measured blind on
+        # the NPU, in which case it goes to the CPU, which actually detects.
         policy.toggle_gpu()
         assignments = {
             item.stage: item for item in build_stage_assignments(policy, health, 0)
         }
-        self.assertEqual(assignments["person_detector"].requested_device, "NPU")
         self.assertEqual(assignments["person_detector"].intended_device, "GPU")
+        self.assertEqual(assignments["pose"].requested_device, "NPU")
+        self.assertEqual(assignments["pose"].intended_device, "NPU")
 
     def test_unavailable_model_device_uses_explicit_fallback(self) -> None:
         class FakeAvailability:
@@ -385,7 +452,10 @@ class ScenarioCatalogTests(unittest.TestCase):
                 0,
             )
         }
-        self.assertEqual(assignments["perimeter_detector"].requested_device, "NPU")
+        # GPU off: the person model is measured blind on the NPU, so it must skip
+        # the NPU and use the CPU rather than go empty. crossroad-1016 and the
+        # plate model both work on the NPU and keep it.
+        self.assertEqual(assignments["perimeter_detector"].requested_device, "CPU")
         self.assertEqual(assignments["vehicle_detector"].requested_device, "NPU")
         self.assertEqual(assignments["plate_detector"].requested_device, "NPU")
 

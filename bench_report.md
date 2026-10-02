@@ -531,4 +531,85 @@ stretches and a booth visitor may land on an empty frame. This is recorded rathe
   verified source URL, so it is deliberately not wired in. Adding it requires sourcing a real URL
   and recording it, not inventing one.
 
+## GPU-off fallback fix
+
+### Symptom
+
+With the GPU operator toggle off (`G`, or `--gpu-off`), the person-detecting verticals rendered an
+empty tile. The fallback chain was handing `person-detection-retail-0013` to the NPU — the one device
+where that model produces nothing.
+
+### Root cause, measured
+
+Two boundaries, measured rather than inferred:
+
+**Policy → assignment.** With `gpu_enabled=False` in `SPREAD`, `device_for_stream(0)` returns `NPU`
+for every stage preference, and `build_stage_assignments` produced `person_detector` with
+`intended=GPU -> requested=NPU` for `health`, `manufacturing`, `robotics` and `education`.
+`federal` reached the NPU by a different route: `perimeter_detector` is excluded from the auxiliary
+branch and so inherited the round-robin result, also `NPU`.
+
+**Model → detections.** `person-detection-retail-0013` on 30 uniformly sampled frames of
+`media/medical-eldercare.mp4` at confidence ≥ 0.3:
+
+| Device | Total detections | Mean/frame | Labels |
+|---|---:|---:|---|
+| NPU | **0** | 0.00 | — |
+| GPU | 78 | 2.60 | person ×78 |
+| CPU | 78 | 2.60 | person ×78 |
+
+So the model compiles on the NPU and reports `EXECUTION_DEVICES=['NPU']`, but emits no boxes. GPU
+and CPU are identical. `AvailabilityMatrix.supports()` answers "did it compile and land correctly",
+not "does it produce anything", so the availability gate was satisfied by a device where the model is
+blind. That is the defect: **device selection was driven by compilability alone.**
+
+### Fix
+
+The fact that a model compiles but emits nothing is measured data, so it is recorded as verified data
+in `config/models.json` rather than a hardcoded set in code:
+
+```json
+"no_usable_output_on": {
+  "NPU": "Compiles and reports EXECUTION_DEVICES=['NPU'], but emits no boxes. Measured 2026-10-01 ..."
+}
+```
+
+`load_scenario_catalog` reads that into `StageSpec.unusable_devices`, and device selection now
+applies one rule everywhere: **a model is never assigned to a device where it was measured to
+produce no usable output.** Enforced in three places that could each reintroduce the bug — the
+`SPLIT` GPU→NPU fallback, the `SPREAD`/auxiliary GPU→NPU fallback, the round-robin result, plus
+`_fallback_for_model` so `AUTO` priority lists drop the blind device too.
+
+### Verification
+
+New tests (`test_gpu_off_never_parks_a_npu_blind_model_on_the_npu`, over `SPREAD` and `SPLIT` × all
+five person-detecting verticals) failed on all ten subtests before the fix, plus
+`test_npu_blind_fact_is_recorded_in_verified_config` and
+`test_catalog_propagates_the_blind_device_to_the_stage`. Two pre-existing tests had encoded the buggy
+expectation (`perimeter_detector -> NPU` with the GPU off) and were corrected with the reason
+recorded.
+
+Measured after the fix, `--gpu-off`, 25 s per vertical, from the captured HUD:
+
+| Vertical | Placement with GPU off | Detections | Evidence |
+|---|---|---:|---|
+| `health` | Person: **CPU** · Pose: NPU · Events: CPU | 3 | `person 95%`, `person 31%`; `logs/gpuoff-health.png` |
+| `federal` | Perimeter: **CPU** · vehicle_detector: NPU · Plate: NPU · Events: CPU | 12 | `person 86%`, `person 82%`, `person 48%`, `vehicle 38%`, `license plate 34%`; `logs/gpuoff-federal.png` |
+
+`crossroad-1016` and `vehicle-license-plate-detection-barrier-0106` are unlisted and keep their NPU
+placements. Cost of the fix: the person detector runs on the CPU when the GPU is off — 15.7 FPS on
+`health` and 13.5 FPS on `federal` — but it detects, which is the point of the mode. The HUD still
+shows the `GPU OFF · NPU FAILOVER` badge and the `FALLBACK` indicator, so the substitution is visible
+to an operator rather than hidden.
+
+Gates after the fix: `87 tests OK` (was 84), selftest `11 PASS / 0 FAIL`, preflight
+`101 PASS / 0 WARN / 0 FAIL`, `tools/verify_sources.py` `48 PASS / 0 FAIL`.
+
+### Known limitation, deliberately not changed
+
+`NPU_ONLY` mode still forces every stage to the NPU, including the blind person detector, so that
+tile will be empty. That is an explicit operator request to run NPU-only, and overriding it would
+make the mode label untrue. It is recorded here rather than silently changed.
+
+
 

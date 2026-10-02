@@ -139,7 +139,10 @@
       ],
       "labels": "omz:person-detection-retail-0013",
       "gflops": null,
-      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/person-detection-retail-0013/README.md"
+      "spec_url": "https://github.com/openvinotoolkit/open_model_zoo/blob/master/models/intel/person-detection-retail-0013/README.md",
+      "no_usable_output_on": {
+        "NPU": "Compiles and reports EXECUTION_DEVICES=['NPU'], but emits no boxes. Measured 2026-10-01 on media/medical-eldercare.mp4, 30 uniformly sampled frames, confidence>=0.3: NPU 0 detections, GPU 78, CPU 78 (GPU and CPU identical). Device selection must not use the NPU for this model."
+      }
     },
     {
       "id": "product-detection-0001",

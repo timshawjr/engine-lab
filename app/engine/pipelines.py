@@ -92,6 +92,18 @@ class StageSpec:
     model_id: str
     device_pref: str
     vocabulary: str | None = None
+    # Devices where this model was measured to produce no usable output, read
+    # from models.json. A model can compile correctly on a device and still be
+    # blind there, so device selection must avoid these.
+    unusable_devices: frozenset[str] = frozenset()
+
+    def can_run_on(self, device: str) -> bool:
+        """False when this model was measured to emit no usable output here.
+
+        Only meaningful for a single device name; an ``AUTO:`` priority list is
+        filtered separately in ``_fallback_for_model``.
+        """
+        return device not in self.unusable_devices
 
 
 @dataclass(frozen=True)
@@ -219,6 +231,12 @@ def load_scenario_catalog(
         item["id"]: media_root / item["file"]
         for item in models_payload["media"]
     }
+    # Measured "compiles but emits nothing" facts, keyed by model id. These are
+    # verified data in models.json, not a hardcoded list in code.
+    unusable_by_model = {
+        item["id"]: frozenset(item.get("no_usable_output_on", {}))
+        for item in models_payload["models"]
+    }
     scenarios: list[ScenarioConfig] = []
     for item in payload["scenarios"]:
         zones = tuple(
@@ -246,6 +264,9 @@ def load_scenario_catalog(
                         model_id=stage["model_id"],
                         device_pref=stage["device_pref"],
                         vocabulary=stage.get("vocabulary"),
+                        unusable_devices=unusable_by_model.get(
+                            stage["model_id"], frozenset()
+                        ),
                     )
                     for stage in item["stages"]
                 ),
@@ -396,7 +417,7 @@ def _stage_target(
         if stage.device_pref == "GPU":
             if policy.gpu_enabled:
                 return "GPU", "GPU"
-            if policy.npu_enabled:
+            if policy.npu_enabled and stage.can_run_on("NPU"):
                 return "NPU", "GPU"
         return "CPU", stage.device_pref
 
@@ -407,13 +428,22 @@ def _stage_target(
                 return "GPU", "NPU"
             return "CPU", "NPU"
         if stage.device_pref == "GPU" and not policy.gpu_enabled:
-            if policy.npu_enabled:
+            # Skip the NPU for a model measured to emit nothing there: the CPU
+            # is slower but actually detects, which is the whole point.
+            if policy.npu_enabled and stage.can_run_on("NPU"):
                 return "NPU", "GPU"
             return "CPU", "GPU"
         return stage.device_pref, stage.device_pref
     if scenario.id == "federal" and stage.device_pref == "GPU" and policy.gpu_enabled:
         return "GPU", "GPU"
     requested = policy.device_for_stream(stream_index, stage.device_pref)
+    if not requested.startswith("AUTO:") and not stage.can_run_on(requested):
+        # Round-robin picked a device this model is measured to be blind on.
+        # Take the next enabled device that can actually run it.
+        for device in snapshot.active_devices:
+            if device != requested and stage.can_run_on(device):
+                return device, device
+        return "CPU", requested
     return requested, requested
 
 
@@ -422,21 +452,23 @@ def _fallback_for_model(
     model_id: str,
     requested: str,
     active_devices: tuple[str, ...],
+    unusable_devices: frozenset[str] = frozenset(),
 ) -> str:
+    def usable(device: str) -> bool:
+        return availability.supports(model_id, device) and device not in unusable_devices
+
     if requested.startswith("AUTO:"):
         priorities = tuple(
             device
             for device in requested.split(":", 1)[1].split(",")
             if device
         )
-        supported = tuple(
-            device for device in priorities if availability.supports(model_id, device)
-        )
+        supported = tuple(device for device in priorities if usable(device))
         return "AUTO:" + ",".join(supported) if supported else "CPU"
-    if availability.supports(model_id, requested):
+    if usable(requested):
         return requested
     for device in active_devices:
-        if device != requested and availability.supports(model_id, device):
+        if device != requested and usable(device):
             return device
     return "CPU"
 
@@ -468,6 +500,7 @@ def build_stage_assignments(
                 stage.model_id,
                 requested,
                 snapshot.active_devices,
+                stage.unusable_devices,
             )
         spread_multi = snapshot.mode == DeviceMode.SPREAD and snapshot.density > 1
         if requested.startswith("CPU"):

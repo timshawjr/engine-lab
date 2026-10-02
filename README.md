@@ -239,6 +239,17 @@ stages then fail over to GPU. If both accelerators are disabled, they fall back 
 panel shows `GPU OFF · NPU FAILOVER`, `NPU OFF · GPU FAILOVER`, or `NPU/GPU OFF · CPU FALLBACK`, and
 the stage tiles continue to show the measured execution devices.
 
+One exception is deliberate: a model is never moved to a device where it was **measured to produce
+no usable output**, even when that device is the natural fallback. `person-detection-retail-0013`
+compiles on the NPU and reports `EXECUTION_DEVICES=['NPU']` but emits no boxes there (measured 0
+detections against 78 on GPU and 78 on CPU over the same frames), so with the GPU off it moves to
+the CPU instead of the NPU — slower, but it detects. That fact is recorded as verified data in
+`config/models.json` under `no_usable_output_on`, with the measurement that justifies it. The
+substitution is always visible: the `FALLBACK` indicator lights and the tile reports `Person: CPU`.
+
+`NPU_ONLY` mode is the one place this rule does not apply, because the operator has explicitly asked
+for NPU-only; that tile renders empty and says so rather than quietly becoming something else.
+
 ### Attract and unattended run
 
 Attract mode hides the gauges, shows a large vertical headline, cycles deterministically through
