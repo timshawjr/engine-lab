@@ -31,6 +31,7 @@ from app import hangwatch
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_CONFIG = ROOT / "config" / "models.json"
 REQUIRED_PROFILES = ROOT / "config" / "platform_profiles.json"
+REQUIRED_RAG_CONFIG = ROOT / "config" / "rag.json"
 REQUIRED_SCENARIOS = ROOT / "config" / "scenarios.json"
 TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
 SCENARIO_IDS = (
@@ -391,6 +392,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="start in deterministic no-gauge attract mode",
     )
     parser.add_argument(
+        "--rag-page",
+        action="store_true",
+        help="start on the document Q&A page (loads the GenAI pipelines)",
+    )
+    parser.add_argument(
+        "--rag-ask",
+        default="",
+        help="diagnostic: ask this question on the RAG page after --rag-switch-after",
+    )
+    parser.add_argument(
+        "--rag-switch-after",
+        type=float,
+        default=0.0,
+        help="diagnostic: switch to the document Q&A page after this many seconds",
+    )
+    parser.add_argument(
         "--force-availability",
         action="store_true",
         help="diagnostic: ignore the fingerprinted DeviceAvailability cache",
@@ -587,9 +604,23 @@ def _run_application(args: argparse.Namespace) -> int:
         npu_enabled=not args.npu_off,
         gpu_enabled=not args.gpu_off,
         attract_mode=args.attract,
+        rag_config_path=REQUIRED_RAG_CONFIG,
         startup_origin_perf=startup_origin,
     )
     window.start()
+    if args.rag_page or args.rag_switch_after:
+        window.set_page("rag")
+    if args.rag_ask:
+        if not args.rag_switch_after and not args.rag_page:
+            raise ValueError("--rag-ask requires --rag-page or --rag-switch-after")
+
+        def ask_rag() -> None:
+            window.rag_input.setText(args.rag_ask)
+            window._ask_rag()
+
+        QTimer.singleShot(
+            round((args.rag_switch_after or 1.0) * 1000.0) + 500, ask_rag
+        )
     if args.npu_toggle_after:
         QTimer.singleShot(
             round(args.npu_toggle_after * 1000.0),

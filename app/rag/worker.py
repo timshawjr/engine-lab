@@ -94,6 +94,10 @@ class RagWorker(QObject):
             self._request.connect(self._run_request, Qt.ConnectionType.QueuedConnection)
             self._thread.start()
 
+    def is_busy(self) -> bool:
+        """Whether a request is in flight. Safe to read from the UI thread."""
+        return self._busy
+
     def ask(self, question: str) -> None:
         """Queue one question. Returns immediately.
 
@@ -156,13 +160,24 @@ class RagWorker(QObject):
             self.busy_changed.emit(False)
 
     def shutdown(self) -> None:
-        """Stop accepting work and tear the thread down. Safe to call twice."""
+        """Stop accepting work and tear the thread down. Safe to call twice.
+
+        The thread must be stopped before this QObject is destroyed. Leaving a
+        QThread running and letting Python garbage-collect it aborts the process
+        with STATUS_STACK_BUFFER_OVERRUN, so the page calls this from its own
+        shutdown path.
+        """
         if self._shutdown:
             return
         self._shutdown = True
-        if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait(3000)
+        thread = self._thread
+        if thread is not None:
+            thread.quit()
+            # A request already in flight holds the pipeline for its measured
+            # 1.3-2.0 s, so allow it to drain rather than cutting the model off
+            # mid-generation. Only after that is it safe to discard.
+            if not thread.wait(5000):
+                LOGGER.warning("RAG worker thread did not stop in time")
             self._thread = None
 
 

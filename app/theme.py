@@ -87,6 +87,28 @@ class Theme:
     metric_window_seconds: float = 10.0
     sparkline_window_seconds: float = 60.0
     rss_sample_seconds: float = 5.0
+    # RAG booth page. The answer and the passages that produced it sit side by
+    # side: showing the evidence is what lets a visitor judge a weak answer, so
+    # the passage column is a fixed width rather than a flexible one.
+    rag_question_font: int = 26
+    rag_answer_font: int = 19
+    rag_source_font: int = 14
+    rag_passage_width: int = 620
+    # Characters of each retrieved passage shown as evidence. Cut on a word
+    # boundary, so the real value only affects where the excerpt stops.
+    # Characters of each retrieved passage shown as evidence. Set high enough
+    # that passages are shown WHOLE: at 700 only 78 of the 595 chunks fitted,
+    # and a truncated passage hides the very sentence that answers the question.
+    # Measured case: "perform a factory reset" sat at char 1476 of p.107, so the
+    # UI showed a correct answer with no visible support for it. The panel
+    # scrolls, so a long passage costs nothing.
+    rag_passage_excerpt_chars: int = 5000
+    # Scrollbar width inside the passage panel. Wide enough to grab at a booth.
+    rag_scrollbar_width: int = 14
+    rag_input_height: int = 52
+    rag_answer_max_chars: int = 1200
+    rag_history_max: int = 8
+
     gauge_max_percent: float = 100.0
     percentile_p50: float = 50.0
     percentile_p95: float = 95.0

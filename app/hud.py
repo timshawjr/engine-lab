@@ -30,10 +30,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
@@ -45,6 +47,8 @@ from PySide6.QtWidgets import (
     QLayout,
 )
 
+from app.rag.config import load_rag_backends, load_rag_config
+from app.rag.worker import RagWorker
 from app.engine.availability import AvailabilityMatrix
 from app.engine.device_policy import DENSITIES, DeviceMode, DevicePolicy, PolicySnapshot
 from app.engine.events import BusinessEvent
@@ -1204,9 +1208,11 @@ class MainWindow(QMainWindow):
         npu_enabled: bool = True,
         gpu_enabled: bool = True,
         attract_mode: bool = False,
+        rag_config_path: Path | None = None,
         startup_origin_perf: float | None = None,
     ) -> None:
         super().__init__()
+        self.rag_config_path = rag_config_path
         self.catalog = catalog
         self.registry = registry
         self.task_labels = {
@@ -1322,11 +1328,257 @@ class MainWindow(QMainWindow):
         self.compact_layout = use_compact_layout(available_width, available_height)
         self.demo_page = QWidget()
         self.attract_page = QWidget()
+        self.rag_page = QWidget()
         self.stack.addWidget(self.demo_page)
         self.stack.addWidget(self.attract_page)
+        self.stack.addWidget(self.rag_page)
+        self.page_index = {"demo": 0, "attract": 1, "rag": 2}
+        self.current_page = "demo"
         self._build_demo_page()
         self._build_attract_page()
+        self._build_rag_page()
         self.stack.setCurrentIndex(1 if self.attract_mode else 0)
+        self.current_page = "attract" if self.attract_mode else "demo"
+
+    def _build_rag_page(self) -> None:
+        """Document Q&A over NIST SP 800-82r4.
+
+        The retrieved passages are always shown beside the answer. That is not
+        decoration: the model sometimes paraphrases a refusal instead of using
+        the abstention marker, and it was measured answering "not explicitly
+        stated in the provided passages" for an unanswerable question while
+        still reporting abstained=False. Showing the evidence lets a visitor see
+        for themselves whether the passages support the answer.
+
+        The engine is labelled GPU because that is what was measured — the LLM
+        does not compile on the NPU, and embedding on the NPU measured 1170 ms
+        per query against 16 ms on the GPU.
+        """
+        root = QVBoxLayout(self.rag_page)
+        root.setContentsMargins(
+            THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
+        )
+        root.setSpacing(THEME.spacing_sm)
+
+        header = QHBoxLayout()
+        header.addWidget(
+            _label(
+                "Ask the OT security guide",
+                size=THEME.rag_question_font,
+                bold=True,
+            )
+        )
+        header.addStretch(1)
+        self.rag_engine_label = _label(
+            "", size=THEME.rag_source_font, color=THEME.text_muted
+        )
+        self.rag_engine_label.setMaximumWidth(420)
+        self.rag_engine_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+        )
+        header.addWidget(self.rag_engine_label)
+        root.addLayout(header)
+
+        ask_row = QHBoxLayout()
+        self.rag_input = QLineEdit()
+        self.rag_input.setPlaceholderText("Type a question, then press Return")
+        self.rag_input.setFixedHeight(THEME.rag_input_height)
+        self.rag_input.setStyleSheet(
+            f"background: {THEME.panel_alt}; color: {THEME.text}; "
+            f"border: 1px solid {THEME.border}; border-radius: {THEME.radius_small}px; "
+            f"padding: 0 {THEME.spacing_md}px; font-size: {THEME.font_regular}px;"
+        )
+        self.rag_input.returnPressed.connect(self._ask_rag)
+        ask_row.addWidget(self.rag_input, 1)
+        self.rag_ask_button = QPushButton("Ask")
+        self.rag_ask_button.setFixedHeight(THEME.rag_input_height)
+        self.rag_ask_button.clicked.connect(self._ask_rag)
+        ask_row.addWidget(self.rag_ask_button)
+        root.addLayout(ask_row)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(THEME.spacing_md)
+
+        answer_panel = _panel()
+        answer_layout = QVBoxLayout(answer_panel)
+        answer_layout.setContentsMargins(
+            THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
+        )
+        answer_layout.addWidget(
+            _label("ANSWER", size=THEME.rag_source_font, color=THEME.text_muted, bold=True)
+        )
+        self.rag_answer = QLabel("Ask a question to see an answer, with the passages it came from.")
+        self.rag_answer.setWordWrap(True)
+        self.rag_answer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.rag_answer.setStyleSheet(f"color: {THEME.text}; font-size: {THEME.rag_answer_font}px;")
+        answer_layout.addWidget(self.rag_answer, 1)
+        self.rag_timing_label = _label("", size=THEME.rag_source_font, color=THEME.text_muted)
+        answer_layout.addWidget(self.rag_timing_label)
+        columns.addWidget(answer_panel, 1)
+
+        source_panel = _panel()
+        source_layout = QVBoxLayout(source_panel)
+        source_layout.setContentsMargins(
+            THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
+        )
+        source_layout.addWidget(
+            _label(
+                "SOURCE PASSAGES",
+                size=THEME.rag_source_font,
+                color=THEME.text_muted,
+                bold=True,
+            )
+        )
+        self.rag_sources = QLabel("No passages retrieved yet.")
+        self.rag_sources.setWordWrap(True)
+        self.rag_sources.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.rag_sources.setFixedWidth(THEME.rag_passage_width)
+        self.rag_sources.setStyleSheet(
+            f"color: {THEME.text_muted}; font-size: {THEME.rag_source_font}px;"
+        )
+        # Scrollable: three full passages overflow the panel at booth height, and
+        # a clipped passage is worse than one the visitor can scroll.
+        source_scroll = QScrollArea()
+        source_scroll.setWidgetResizable(True)
+        source_scroll.setFixedWidth(THEME.rag_passage_width)
+        source_scroll.setWidget(self.rag_sources)
+        source_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        source_scroll.viewport().setStyleSheet(
+            f"background: {THEME.panel}; border: none;"
+        )
+        source_scroll.verticalScrollBar().setStyleSheet(
+            f"background: {THEME.panel_alt}; border: none;"
+            f"width: {THEME.rag_scrollbar_width}px;"
+        )
+        source_scroll.horizontalScrollBar().setStyleSheet(
+            f"background: {THEME.panel_alt}; border: none;"
+            f"height: {THEME.rag_scrollbar_width}px;"
+        )
+        source_layout.addWidget(source_scroll)
+        columns.addWidget(source_panel)
+        root.addLayout(columns, 1)
+
+        self.rag_status = _label("Esc returns to the pipeline view.", color=THEME.text_muted)
+        root.addWidget(self.rag_status)
+
+        self._init_rag()
+
+    def _init_rag(self) -> None:
+        """Wire the document Q&A worker. Degrades quietly if models are absent."""
+        self.rag_worker: RagWorker | None = None
+        config_path = self.rag_config_path
+        if config_path is None:
+            self.rag_engine_label.setText("unavailable")
+            self.rag_ask_button.setEnabled(False)
+            self.rag_input.setEnabled(False)
+            self.rag_status.setText("Document Q&A unavailable: no config path supplied.")
+            return
+        try:
+            self.rag_config = load_rag_config(config_path)
+        except Exception as exc:  # noqa: BLE001 - a missing config must not block the app
+            LOGGER.warning("Document Q&A disabled: %s", exc)
+            self.rag_config = {}
+            self.rag_engine_label.setText("unavailable")
+            self.rag_ask_button.setEnabled(False)
+            self.rag_input.setEnabled(False)
+            self.rag_status.setText(f"Document Q&A unavailable: {exc}")
+            return
+
+        title = self.rag_config.get("document", {}).get(
+            "title", "NIST SP 800-82r4"
+        )
+        self.rag_engine_label.setText(
+            f"engine: {self.rag_config.get('device_label', 'GPU')}"
+        )
+        self.rag_engine_label.setToolTip(f"{title} — retrieval and generation both run on "
+                                       f"{self.rag_config.get('device_label', 'GPU')}")
+        try:
+            backends = load_rag_backends(self.rag_config, config_path.resolve().parents[1])
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("Could not start the document Q&A pipelines: %s", exc)
+            self.rag_engine_label.setText("unavailable")
+            self.rag_ask_button.setEnabled(False)
+            self.rag_input.setEnabled(False)
+            self.rag_status.setText(f"Document Q&A unavailable: {exc}")
+            return
+
+        self.rag_worker = RagWorker(backends, parent=self)
+        self.rag_worker.answered.connect(self._on_rag_answered)
+        self.rag_worker.failed.connect(self._on_rag_failed)
+
+    def set_page(self, name: str) -> None:
+        """Switch the visible page. ``name`` is demo, attract or rag."""
+        index = self.page_index.get(name)
+        if index is None:
+            return
+        if name == "rag":
+            self.attract_timer.stop()
+        self.stack.setCurrentIndex(index)
+        self.current_page = name
+        if name == "rag":
+            self.rag_input.setFocus()
+
+    def _ask_rag(self) -> None:
+        question = self.rag_input.text().strip()
+        if not question:
+            # Nothing to ask. Do not spend the measured 1.3 s to say so.
+            self.rag_status.setText("Type a question first.")
+            return
+        if self.rag_worker is not None and self.rag_worker.is_busy():
+            self.rag_status.setText("Still answering the previous question.")
+            return
+        self.rag_ask_button.setEnabled(False)
+        self.rag_answer.setText("Retrieving passages and answering...")
+        self.rag_sources.setText("")
+        self.rag_timing_label.setText("")
+        self.rag_status.setText("Working — the pipeline view is still live behind this page.")
+        self.rag_worker.ask(question)
+
+    def _on_rag_answered(self, answer: object) -> None:
+        passages = list(answer.passages)
+        if answer.abstained:
+            self.rag_answer.setStyleSheet(
+                f"color: {THEME.warning}; font-size: {THEME.rag_answer_font}px;"
+            )
+            self.rag_answer.setText(
+                f"{self.rag_config['abstention_marker']}\n\n"
+                "The passages below do not appear to answer this. They are shown "
+                "so you can judge that yourself."
+            )
+        else:
+            self.rag_answer.setStyleSheet(
+                f"color: {THEME.text}; font-size: {THEME.rag_answer_font}px;"
+            )
+            text = answer.answer.strip() or "(the model returned nothing)"
+            self.rag_answer.setText(text[: THEME.rag_answer_max_chars])
+
+        rendered = []
+        for passage in passages:
+            words = " ".join(passage.text.split())
+            # Cut on a word boundary: a passage ending mid-word reads as a
+            # rendering fault rather than a deliberate excerpt.
+            excerpt = words[: THEME.rag_passage_excerpt_chars]
+            if len(words) > THEME.rag_passage_excerpt_chars:
+                excerpt = excerpt[: excerpt.rfind(" ")] + " ..."
+            rendered.append(
+                f"[p.{passage.page}]  score {passage.score:.3f}\n{excerpt}"
+            )
+        self.rag_sources.setText("\n\n".join(rendered) or "No passages retrieved.")
+        self.rag_timing_label.setText(
+            f"retrieval {answer.embed_ms:.0f} ms · generation {answer.generate_ms:.0f} ms"
+            f" · {answer.embed_ms + answer.generate_ms:.0f} ms total"
+        )
+        self.rag_ask_button.setEnabled(True)
+        self.rag_input.clear()
+        self.rag_status.setText("Answered from the retrieved passages above.")
+
+    def _on_rag_failed(self, detail: str) -> None:
+        self.rag_ask_button.setEnabled(True)
+        self.rag_answer.setStyleSheet(
+            f"color: {THEME.danger}; font-size: {THEME.rag_answer_font}px;"
+        )
+        self.rag_answer.setText("The document assistant failed. The pipeline view is unaffected.")
+        self.rag_status.setText(detail.strip().splitlines()[-1] if detail.strip() else "Failed")
 
     def _build_demo_page(self) -> None:
         root = QVBoxLayout(self.demo_page)
@@ -1562,7 +1814,7 @@ class MainWindow(QMainWindow):
         for panel in self.bottom_panels:
             panel.setVisible(self.policy_snapshot.density > 1)
         self.status_label = _label(
-            f"1-{len(SCENARIO_ORDER)} scenario · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
+            f"1-{len(SCENARIO_ORDER)} scenario · R document Q&A · N/G toggle · C mode · +/- density · A attract · F1 operator · F11 fullscreen · Q quit",
             color=THEME.text_muted,
         )
         root.addWidget(self.status_label)
@@ -1881,7 +2133,12 @@ class MainWindow(QMainWindow):
 
     def set_attract_mode(self, enabled: bool) -> None:
         self.attract_mode = enabled
-        self.stack.setCurrentIndex(1 if enabled else 0)
+        # Leaving the RAG page must never drop the user into attract mode, so the
+        # page index is chosen explicitly rather than by the old 1/0 shortcut.
+        self.stack.setCurrentIndex(
+            self.page_index["attract"] if enabled else self.page_index["demo"]
+        )
+        self.current_page = "attract" if enabled else "demo"
         # No LIVE/ATTRACT badge any more: attract mode replaces the whole page, so
         # the page itself is the indicator.
         if enabled:
@@ -2148,8 +2405,21 @@ class MainWindow(QMainWindow):
             elif key == Qt.Key.Key_Q:
                 self.close()
             return
+        if self.current_page == "rag":
+            # On the document page only a few keys are meaningful. Escape leaves
+            # rather than quitting, so a visitor can go back without ending the
+            # demo.
+            if key == Qt.Key.Key_Escape:
+                self.set_page("demo")
+            elif key == Qt.Key.Key_Q:
+                self.close()
+            else:
+                super().keyPressEvent(event)
+            return
         if key in SCENARIO_KEYS:
             self.switch_scenario(SCENARIO_KEYS[key])
+        elif key == Qt.Key.Key_R:
+            self.set_page("rag")
         elif key == Qt.Key.Key_N:
             self.toggle_npu()
         elif key == Qt.Key.Key_G:
@@ -2162,6 +2432,7 @@ class MainWindow(QMainWindow):
             self.change_density(-1)
         elif key == Qt.Key.Key_A:
             self.set_attract_mode(not self.attract_mode)
+            self.set_page("demo")
         elif key == Qt.Key.Key_F1:
             self._open_operator()
         elif key == Qt.Key.Key_F11:
@@ -2193,6 +2464,11 @@ class MainWindow(QMainWindow):
         self._stop_scenario_workers(workers, delete_objects=False)
         self.video_clock.wait(3000)
         self.telemetry_sampler.stop()
+        # The Q&A worker owns a live QThread. Destroying it while running aborts
+        # with STATUS_STACK_BUFFER_OVERRUN (observed: exit code -1073740791), so
+        # it must be stopped before the window goes away.
+        if getattr(self, "rag_worker", None) is not None:
+            self.rag_worker.shutdown()
 
     def closeEvent(self, event: Any) -> None:
         self.shutdown()
