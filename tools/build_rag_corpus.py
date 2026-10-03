@@ -23,9 +23,9 @@ the reference extractor this was ported from):
   layout pypdf  justified text mangled: "n et work bu t n ot allow ed"
   pdfminer      lost line ordering entirely on the two-column pages
 
-So: plain extraction, then repair. ``pypdf`` is imported inside ``main()``
-and never at module level, because the pinned ``.venv`` has no ``pypdf`` and
-the unit tests import the cleaning helpers from that venv.
+So: plain extraction, then repair. ``pypdf`` is imported inside
+``build_corpus()`` and never at module level, because the pinned ``.venv``
+has no ``pypdf`` and the unit tests import the cleaning helpers from that venv.
 """
 
 from __future__ import annotations
@@ -51,9 +51,13 @@ BATCH_SIZE = 16  # one embed_documents call over all 595 chunks exhausts GPU mem
 
 # Measured counts from the spike. A mismatch means the PDF or the cleaning
 # changed; the bake refuses to proceed rather than shipping a silent surprise.
+# EXPECTED_WORDS was re-measured at 107,506 after the common-word stop-list
+# was added: 10 orphan joins that used to glue ("his"+"document" ->
+# "hisdocument", "This"+"document" -> "Thisdocument") now insert a space,
+# splitting one token into two each.
 EXPECTED_PAGES = 321
 EXPECTED_CHUNKS = 595
-EXPECTED_WORDS = 107_496
+EXPECTED_WORDS = 107_506
 
 HEADER = re.compile(
     r"NIST\s*SP\s*800[-\s]*82r|Guide\s*to\s*OT\s*Security|^September\s*2026\s*$",
@@ -62,6 +66,28 @@ HEADER = re.compile(
 ROMAN = re.compile(r"^[ivxlcdm]+$", re.IGNORECASE)
 TRAILING_NUM = re.compile(r"^(.*?)\s+(\d{1,5})\s*$")
 FOLIO = re.compile(r"\d{1,4}")
+
+# A small, closed set of high-frequency English words. When the left-hand
+# fragment of a potential orphan join is one of these, it is a complete word,
+# not a mid-word fragment, so it is joined WITH a space instead of being
+# glued ("his" + "document" must stay two words; "mec" + "hanisms" must
+# become "mechanisms"). Deliberately NOT exhaustive -- "doc" is excluded on
+# purpose so "doc" + "ument" still glues to "document".
+COMMON_WORDS = frozenset(
+    """
+    i me my mine myself we us our ours ourselves you your yours yourself
+    he him his she her hers it its itself they them their theirs themselves
+    this that these those who whom whose what which when where why how
+    the a an
+    is are was were be been being am do does did has have had
+    will would shall should can could may might must
+    not no yes all any each every both few more most other some such
+    only own same than then so too very just
+    and but for nor yet
+    out off into over under with from about after before between during
+    through while within without
+    """.split()
+)
 
 
 def marginal_line_numbers(lines: list[str]) -> set[int]:
@@ -116,6 +142,8 @@ def clean_page(text: str) -> str:
 
     # Rejoin the orphan fragments plain mode leaves when a word is split
     # ("mec" + "hanisms", "end-of-s" + "upport", "O" + "rganizations").
+    # A left-hand fragment that is a common word is joined WITH a space
+    # instead of being glued ("his" + "document" stays two words).
     out: list[str] = []
     for line in kept:
         if (
@@ -124,7 +152,11 @@ def clean_page(text: str) -> str:
             and re.search(r"[A-Za-z\-]$", out[-1])
             and re.match(r"^[a-z]", line)
         ):
-            out[-1] = out[-1] + line
+            # The left fragment may still carry an unstripped marginal
+            # number ("2 This"), so test its last word, not the whole string.
+            left = out[-1].split()[-1].strip(" \t\"'`([{<").lower()
+            separator = " " if left in COMMON_WORDS else ""
+            out[-1] = out[-1] + separator + line
         else:
             out.append(line)
 
@@ -184,7 +216,10 @@ def _import_genai():
     except ImportError:
         fallback = ROOT / ".venv" / "Lib" / "site-packages"
         if fallback.is_dir():
-            sys.path.insert(0, str(fallback))
+            # Append, never insert at the front: the dev venv's own
+            # site-packages (numpy, transformers, ...) must keep priority
+            # over the pinned venv's copies.
+            sys.path.append(str(fallback))
             import openvino_genai  # noqa: F401
 
             return openvino_genai

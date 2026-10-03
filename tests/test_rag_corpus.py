@@ -35,6 +35,30 @@ class CleaningTests(unittest.TestCase):
         page = "4070 permitted on the enterprise network but not allowed on OT networks."
         self.assertIn("enterprise network but not allowed on OT networks",
                       clean_page("May also be " + page))
+        # Also pin real cleaning behaviour on the same input: the running
+        # header and the bare folio are removed, so an identity clean_page
+        # would fail this test.
+        cleaned = clean_page(
+            "NIST SP 800-82r4 ipd (Initial Public Draft)  Guide to OT Security\n"
+            "September 2026\n\n4070\n"
+            "May also be permitted on the enterprise network but not allowed on OT networks."
+        )
+        self.assertNotIn("NIST SP", cleaned)
+        self.assertNotIn("September 2026", cleaned)
+        self.assertNotIn("4070", cleaned)
+        self.assertIn("May also be permitted", cleaned)
+
+    def test_common_word_fragment_keeps_its_space(self) -> None:
+        # "his" is a complete word, so it must NOT be glued to the next
+        # line. Without the stop-list this produced "hisdocument provides".
+        cleaned = clean_page("his\ndocument provides guidelines")
+        self.assertIn("his document provides guidelines", cleaned)
+        self.assertNotIn("hisdocument", cleaned)
+
+    def test_genuine_fragment_still_glues(self) -> None:
+        # "mec" is a mid-word fragment, so it must still glue to "hanisms".
+        cleaned = clean_page("mec\nhanisms")
+        self.assertIn("mechanisms", cleaned)
 
 
 if __name__ == "__main__":
