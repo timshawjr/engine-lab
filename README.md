@@ -341,14 +341,41 @@ The deterministic loop is the default. A camera is never used unless explicitly 
 | `C` | Cycle `auto → spread → npu_only → gpu_only → cpu_only → split` |
 | `+` / `-` | Change density through 1, 2, 4, 6, 8 |
 | `A` | Enter/leave attract mode; any key leaves attract mode |
+| `R` | Open the document Q&A page |
 | `F1` | Open the operator overlay |
 | `F11` | Toggle fullscreen |
-| `Q` | Quit after confirmation; `Esc` exits immediately |
+| `Q` | Quit after confirmation; `Esc` returns to the pipeline from the Q&A page, otherwise exits immediately |
 
 Scenario switches are in-process. Workers retain compiled model stores and per-scenario
 `AsyncInferQueue` caches, while the video clock, overlay, zones, and event rules switch
 without a process reload. A placement transition is acknowledged only after every active worker
 reports its new `EXECUTION_DEVICES` payload.
+
+## Document Q&A (press `R`)
+
+A seventh page answers questions about **NIST SP 800-82r4** — a 321-page publication
+baked into 595 chunks — entirely on the machine, with OpenVINO GenAI. It is a separate
+demo page, not a seventh vertical: the OEP suite is still the six scenarios above.
+
+```powershell
+python -m app.main                                  # normal start; press R for the page
+python -m app.main --rag-page                        # start on the Q&A page
+python -m app.main --rag-page --rag-ask "What is a safety instrumented system?" `
+    --exit-after 20 --screenshot logs/rag-page.png   # headless booth check
+```
+
+Type a question, press Return, and the answer appears with the three passages it came
+from, each labelled `[p.N]` with its retrieval score. The passages are always shown:
+they are the evidence, and the model sometimes paraphrases a refusal instead of
+reporting one, so a visitor can judge the answer rather than trust it.
+
+**This page runs on the GPU, and says so.** That is measured, not assumed: the LLM does
+not compile on the NPU, and NPU embedding measured 1,170 ms per query against 16 ms on
+the GPU. End-to-end is mean 1.3 s, max 2.0 s.
+
+`Esc` returns to the pipeline view, which keeps running underneath. Full measurements,
+the rejected reranker, and the three silent failures that were found along the way are
+in `bench_report.md`.
 
 ## What the HUD measures
 

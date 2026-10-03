@@ -952,3 +952,201 @@ dead config.
 | `python tools/preflight.py` | `105 PASS, 0 WARN, 0 FAIL` (exit 0; was 107 - one scenario and one vocabulary row) |
 | `--scenario robotics` | rejected by the CLI: `invalid choice: 'robotics' (choose from retail, metro, manufacturing, education, health, federal)` |
 | HUD | status bar reads `1-6 scenario`; keys 1-6 map in catalog order |
+---
+
+# Phase 4 — On-device document Q&A (RAG) over NIST SP 800-82r4
+
+A seventh page answers questions about a 321-page NIST publication entirely on the
+machine: retrieval-augmented generation with OpenVINO GenAI. It is a separate demo
+page, not a seventh vertical — the OEP suite remains the six scenarios above.
+
+## What was measured, not assumed
+
+### Dependencies
+
+`openvino-genai==2026.4.0.0` and `openvino-tokenizers==2026.4.0.0` were added.
+The `.0` suffix is deliberate: `openvino-genai` unpinned resolves to 2026.4.1 and
+pulls `openvino` forward, which would move the pin every existing model depends on.
+Verified after install:
+
+```
+openvino 2026.4.0-22959-99c81491cc3-releases/2026/4
+genai    2026.4.0.0-3407-7ea2546852a
+```
+
+### Corpus
+
+`tools/build_rag_corpus.py` extracts and chunks the PDF at build time, then bakes a
+float32 index. pypdf's **layout** mode and pdfminer were both measured and rejected
+first — see "Extraction dead ends" below.
+
+| Quantity | Measured |
+|---|---|
+| Pages | 321 |
+| Words | 107,506 |
+| Chunks | 595 (median 1,471 chars, max 4,632) |
+| Index | (595, 1024) float32, 2.4 MB |
+| Bake time | ~28 s (build time only, never at runtime) |
+| Warm query embed | 27–102 ms |
+
+### End-to-end, measured on the booth machine
+
+| Question | Sources | Total | Grounded? |
+|---|---|---|---|
+| What is a safety instrumented system? | p.38, p.179, p.146 | 1,633 ms | yes, verbatim from p.179 |
+| How does this document describe network segmentation between IT and OT? | p.131, p.25, p.141 | 1,884 ms | yes, cites `[p.131]` |
+| What should an organization do when a device is no longer supported by its vendor? | p.107, p.106, p.106 | 1,760 ms | yes, "factory reset is imperative" on p.107 |
+
+Mean 1.3 s, max 2.0 s across four questions. Retrieval is ~100 ms; generation is
+1.5–1.8 s and dominates.
+
+## Three silent failures found, each with a regression test
+
+These produced no error and no warning. Each was found by measuring output, not by
+trusting that the code ran.
+
+### 1. GenAI's default pooling silently destroys retrieval
+
+`TextEmbeddingPipeline` defaults to `PoolingType.CLS`, which is meaningless for a
+causal decoder. Measured on this machine:
+
+| Metric | CLS (default) | LAST_TOKEN |
+|---|---|---|
+| query-to-query cosine | 0.9552 | **0.5061** |
+| doc-to-doc cosine | 0.8965 | **0.4173** |
+| score spread, best to third | 0.0025 | **0.1145** (45x) |
+
+Under CLS, three of four *different* questions produced byte-identical vectors
+(cosine 1.0000) and every query retrieved the title page. `LAST_TOKEN` plus
+left padding fixes it. `tests/test_rag_retrieval.py` pins both, including a test
+that asserts GenAI's own default really is CLS so the fix cannot pass vacuously.
+
+### 2. Left padding on the NPU returns all-zero vectors
+
+Measured: NPU embedding under left padding returns a vector of all zeros, silently.
+Uniform scores then look like a working search while returning nonsense. This is
+why `normalise()` raises on a zero vector. The RAG path is GPU-only.
+
+### 3. Qwen3's reasoning tokens consume the whole budget
+
+Left to its own chat template, Qwen3 emitted `<think>...</think>` for the entire
+token budget and returned **no answer at all** — every measured answer was 100%
+reasoning text. Fixed with `apply_chat_template=False` plus an assistant turn
+prefilled with an empty think block. Pinned by `test_prompt_disables_reasoning_mode`.
+
+## The NPU does not participate — measured
+
+| Path | Result |
+|---|---|
+| LLM on NPU | fails to compile (`MultiClusterStrategyAssignment Pass failed`) |
+| Embedding on NPU | compiles, returns finite vectors, **1,170 ms/query vs 16 ms on GPU (73x slower)** |
+
+The page is labelled **GPU** because that is what was measured. It never claims NPU.
+
+Caveat stated honestly: the 73x figure is GenAI's *dynamic-shape* pipeline. A
+statically-shaped export might do better. It was not claimed either way.
+
+## A reranker was measured and rejected
+
+`Qwen3-Reranker-0.6B-seq-cls-fp16-ov` (1.19 GB) was downloaded and evaluated against
+plain dense retrieval over the same questions, with the same generator:
+
+| Question | Dense (38 ms) | Rerank (1,082 ms) | Better |
+|---|---|---|---|
+| Safety instrumented system | verbatim from p.38, cites IEC61511 | vague, cites p.162 (an acronym list) | Dense |
+| Device no longer supported | degenerate fragment | fluent but unsupported | neither |
+| IT/OT segmentation | correct, cites **p.131** | correct content, cites **p.66** | Dense |
+| Compensating controls | correct | correct, tighter | tie |
+| Who authored | all 9 authors | 6 of 9 | Dense |
+
+Correct page citation: **dense 4/5, rerank 2/5**. The reranker also promotes
+abbreviation lists and control tables over passages that answer the question, and
+its failure mode is the dangerous one — it turns a visibly broken answer into a
+fluent, authoritative, unsupported one. Rejected; not added to the project.
+
+An earlier "needle" metric scored the reranker 5/5 because it rewarded any passage
+*containing* the query phrase. Reading the passages is what caught it. Recorded
+here so the metric is not reused.
+
+## Abstention
+
+`config/rag.json`'s system prompt was chosen by measurement, not by taste:
+
+| System prompt | Abstains when unsupported | Wrongly abstains when supported |
+|---|---|---|
+| Original | 0/3 | 0/3 |
+| **Chosen** | **2/3** | **0/3** |
+
+With the original prompt the model fabricated *"The demo uses port 443 for
+telemetry"*; with the chosen wording that became a correct `NOT IN PROVIDED PAGES`.
+
+Abstention is **not binary**: on an unanswerable question the model sometimes
+paraphrases a refusal ("not explicitly stated in the provided passages") instead of
+using the marker, and `is_abstention()` returns False. This is why the page always
+shows the retrieved passages beside the answer, so a visitor can judge for
+themselves rather than trusting a flag.
+
+## PDF extraction: three dead ends, measured
+
+| Approach | Result |
+|---|---|
+| pypdf plain | words split across lines (`mec` + `hanisms`), columns interleaved |
+| pypdf **layout** | justified text mangled: `n et work bu t n ot allow ed` |
+| pdfminer.six | lost line ordering entirely on two-column pages |
+| **pypdf plain + repair** (chosen) | 0 broken fragments |
+
+Repairs applied: drop the running header, drop the folio, strip marginal line
+numbers, and rejoin orphan fragments. Two bugs of our own were caught this way:
+
+- An off-by-one made the line-number detector return an empty set, so numbers
+  4066–4073 stayed embedded mid-sentence.
+- Selecting only the *longest* run discarded the rest of each page. Every run of
+  three or more is now collected; the threshold of three is deliberate, because a
+  run of two is more likely a coincidental pair of integers in body text.
+
+The orphan-fragment join initially glued `"his" + "document"` into `"hisdocument"`
+(fires 96 times on the real PDF; ~94 correct, 2 corrupt). A closed stop-list of
+common words now keeps those two spaced.
+
+## A display bug that made a correct answer look wrong
+
+On the vendor-support question the model answered *"perform a factory reset"* and
+none of the three displayed passages appeared to contain it. Called a
+confabulation — and then checked the corpus before acting. p.107 says
+*"performing and validating a factory reset is imperative"*: the model was right and
+the 700-character excerpt cut the passage before that sentence. Only **78 of 595**
+chunks fit in 700 characters (median 1,471). The excerpt was raised to 5,000 so
+passages show whole; the panel scrolls.
+
+Without that check the abstention machinery would have been tuned against a display
+bug and the model pushed into hedging a true statement.
+
+## Runtime safety
+
+- The worker owns a live `QThread`; the page stops it in `shutdown()`. The first
+  run crashed with `STATUS_STACK_BUFFER_OVERRUN` (exit `-1073740791`) because the
+  thread was destroyed while running. Now exit 0.
+- Verified the UI thread is not blocked: `ask()` returns in 0.000 s and a Qt timer
+  fires at 0.2 s while the request is still in flight.
+- A second request while one is in flight is dropped, not queued, so a
+  double-tapped Ask cannot race two answers into one label.
+- Empty questions are rejected before inference.
+- Backend exceptions are caught, logged with a traceback and surfaced in the page;
+  the pipeline view is unaffected.
+
+## Gates
+
+| Command | Result |
+|---|---|
+| `python -m unittest discover -s tests -q` | `Ran 139 tests ... OK` (exit 0) |
+| `python -m app.main --selftest` | `12 PASS, 0 FAIL` (exit 0); new stage "RAG corpus and retrieval": `595 chunks x 1024d on GPU, top [38, 179, 146], spread 0.130` |
+| `python tools/verify_sources.py` | `48 PASS, 0 FAIL` (exit 0) |
+| `python tools/preflight.py` | `109 PASS, 0 WARN, 0 FAIL` (exit 0) |
+
+The selftest stage asserts the index shape, that all values are finite, that scores
+descend, and that the score spread exceeds 0.01 — the signature of the collapsed-pooling
+failure. LLM generation is deliberately excluded: it costs seconds per question and
+would make a routine green selftest slow. It is verified by the booth run instead.
+
+Preflight gained four rows and fails rather than warns on a broken setup — verified by
+renaming `index.npy` away and observing `FAIL rag corpus/index alignment` with exit 1.

@@ -314,6 +314,75 @@ def _selftest() -> int:
             return f"{len(SCENARIO_IDS)} ordered scenarios, {stage_count} stages, normalized zones, event thresholds"
 
         _selftest_check(checks, "Phase 3 local inventory", phase3_local_inventory_check)
+
+        def rag_corpus_check() -> str:
+            """Corpus, index and retrieval config, with one real GPU embedding.
+
+            LLM generation is deliberately NOT exercised here: it costs seconds per
+            question and would make a routine green selftest slow. Generation is
+            verified by the manual booth run instead.
+            """
+            import numpy as np
+
+            from app.rag.config import load_rag_config
+            from app.rag.retrieval import (
+                Passage,
+                build_embedding_config,
+                load_corpus,
+                load_index,
+                normalise,
+                retrieve,
+            )
+
+            rag = load_rag_config(REQUIRED_RAG_CONFIG)
+            if rag.get("device") != "GPU":
+                raise RuntimeError(
+                    f"rag device must be GPU, config says {rag.get('device')!r}"
+                )
+            passages = load_corpus(ROOT / rag["corpus_path"])
+            index = load_index(ROOT / rag["index_path"])
+            if index.shape != (len(passages), rag["embedding_dim"]):
+                raise RuntimeError(
+                    f"index {index.shape} does not match {len(passages)} chunks "
+                    f"x {rag['embedding_dim']} dimensions"
+                )
+            if not np.isfinite(index).all():
+                raise RuntimeError("embedding index contains non-finite values")
+
+            import openvino_genai as genai
+
+            pipeline = genai.TextEmbeddingPipeline(
+                str(ROOT / rag["embedding_model"]),
+                rag["device"],
+                build_embedding_config(rag["query_instruction"]),
+            )
+            raw = pipeline.embed_query(
+                rag["query_instruction"] + "What is a safety instrumented system?"
+            )
+            vector = np.asarray(raw, dtype=np.float32).ravel()
+            if vector.size != rag["embedding_dim"]:
+                raise RuntimeError(
+                    f"embedding is {vector.size} wide, expected {rag['embedding_dim']}"
+                )
+            vector = normalise(vector)
+            top = retrieve(index, passages, vector, rag["top_k"])
+            scores = [passage.score for passage in top]
+            if scores != sorted(scores, reverse=True):
+                raise RuntimeError(f"scores are not descending: {scores}")
+            # A collapsed embedding would return the same vector for every
+            # question; a spread this small is the signature of that failure.
+            if len(top) > 1 and (scores[0] - scores[1]) < 0.01:
+                raise RuntimeError(
+                    f"score spread {scores[0] - scores[1]:.4f} is too small; "
+                    "check that pooling_type is LAST_TOKEN"
+                )
+            return (
+                f"{len(passages)} chunks x {rag['embedding_dim']}d on "
+                f"{rag['device']}, top {[p.page for p in top]}, "
+                f"spread {scores[0] - scores[-1]:.3f}"
+            )
+
+        _selftest_check(checks, "RAG corpus and retrieval", rag_corpus_check)
     finally:
         socket.socket.connect = original_connect  # type: ignore[method-assign]
         socket.socket.connect_ex = original_connect_ex  # type: ignore[method-assign]
