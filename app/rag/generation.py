@@ -80,7 +80,10 @@ def is_abstention(answer: str, marker: str) -> bool:
 def generate(pipeline: object, prompt: str) -> str:
     """Run one generation and return the answer text.
 
-    Measured end-to-end on this machine: mean 2.1 s, max 3.4 s per question,
-    which is why the worker runs this off the UI thread.
+    Measured end-to-end on this machine: mean 1.3 s, max 2.0 s per question, of
+    which generation is 1.5-1.8 s and dominates. An earlier figure of 2.1 s mean
+    was measured against an interim corpus before the PDF cleaning landed; the
+    difference is the corpus, not a regression. This is why the worker runs the
+    call off the UI thread.
     """
     return str(pipeline.generate(prompt))

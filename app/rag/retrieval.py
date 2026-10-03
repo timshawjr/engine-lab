@@ -32,6 +32,9 @@ from dataclasses import dataclass
 import numpy as np
 import openvino_genai as genai
 
+#: Fallback width when config/rag.json does not state one. config/rag.json's
+#: ``embedding_dim`` is authoritative; this only keeps a hand-built config from
+#: failing on a missing key.
 EMBEDDING_DIM = 1024
 
 
@@ -97,14 +100,19 @@ def _as_matrix(result: object, count: int) -> np.ndarray:
 
 
 def embed_query(
-    pipeline: object, query: str, query_instruction: str
+    pipeline: object, query: str, query_instruction: str, expected_dim: int = EMBEDDING_DIM
 ) -> np.ndarray:
-    """Embed one question and return a unit-length 1-D vector."""
+    """Embed one question and return a unit-length 1-D vector.
+
+    ``expected_dim`` is checked rather than assumed: a wrong-width embedding
+    would fail later as a confusing shape error inside the matmul instead of
+    here, where the cause is obvious.
+    """
     result = pipeline.embed_query(query_instruction + query)
     vector = normalise(_as_matrix(result, 1)[0])
-    if vector.size != EMBEDDING_DIM:
+    if vector.size != expected_dim:
         raise ValueError(
-            f"expected {EMBEDDING_DIM}-dimension embedding, got {vector.size}"
+            f"expected {expected_dim}-dimension embedding, got {vector.size}"
         )
     return vector
 

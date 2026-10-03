@@ -107,7 +107,10 @@ class Theme:
     rag_scrollbar_width: int = 14
     rag_input_height: int = 52
     rag_answer_max_chars: int = 1200
-    rag_history_max: int = 8
+    # The document title is long enough to wrap three lines in the header and
+    # steal height from the answer, so the on-screen label is short and the full
+    # title lives in a tooltip.
+    rag_engine_label_width: int = 420
 
     gauge_max_percent: float = 100.0
     percentile_p50: float = 50.0

@@ -21,6 +21,7 @@ FALLBACK: dict[str, Any] = {
     "device": "GPU",
     "device_label": "GPU",
     "abstention_marker": "NOT IN PROVIDED PAGES",
+    "embedding_dim": 1024,
 }
 
 

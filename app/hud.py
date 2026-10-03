@@ -1372,7 +1372,7 @@ class MainWindow(QMainWindow):
         self.rag_engine_label = _label(
             "", size=THEME.rag_source_font, color=THEME.text_muted
         )
-        self.rag_engine_label.setMaximumWidth(420)
+        self.rag_engine_label.setMaximumWidth(THEME.rag_engine_label_width)
         self.rag_engine_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
         )
@@ -1526,6 +1526,12 @@ class MainWindow(QMainWindow):
             return
         if self.rag_worker is not None and self.rag_worker.is_busy():
             self.rag_status.setText("Still answering the previous question.")
+            return
+        if self.rag_worker is None:
+            # Config or pipelines unavailable. _init_rag already disabled the
+            # input, but --rag-ask drives this programmatically and must not
+            # raise AttributeError.
+            self.rag_status.setText("Document Q&A unavailable.")
             return
         self.rag_ask_button.setEnabled(False)
         self.rag_answer.setText("Retrieving passages and answering...")

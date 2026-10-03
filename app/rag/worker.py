@@ -58,6 +58,7 @@ class RagBackends:
     abstention_marker: str
     top_k: int
     max_new_tokens: int
+    embedding_dim: int = 1024
 
 
 class RagWorker(QObject):
@@ -130,7 +131,10 @@ class RagWorker(QObject):
 
             started = time.perf_counter()
             query_vec = embed_query(
-                backends.embedder, question, backends.query_instruction
+                backends.embedder,
+                question,
+                backends.query_instruction,
+                backends.embedding_dim,
             )
             passages = retrieve(
                 backends.index, backends.passages, query_vec, backends.top_k
@@ -217,4 +221,5 @@ def load_backends(config: dict, root) -> RagBackends:
         abstention_marker=str(config["abstention_marker"]),
         top_k=int(config.get("top_k", 3)),
         max_new_tokens=int(config.get("max_new_tokens", 220)),
+        embedding_dim=int(config.get("embedding_dim", 1024)),
     )

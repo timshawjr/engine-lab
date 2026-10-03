@@ -677,19 +677,23 @@ def _run_application(args: argparse.Namespace) -> int:
         startup_origin_perf=startup_origin,
     )
     window.start()
-    if args.rag_page or args.rag_switch_after:
+    if args.rag_page:
         window.set_page("rag")
-    if args.rag_ask:
-        if not args.rag_switch_after and not args.rag_page:
-            raise ValueError("--rag-ask requires --rag-page or --rag-switch-after")
 
-        def ask_rag() -> None:
-            window.rag_input.setText(args.rag_ask)
-            window._ask_rag()
+    def show_rag_page() -> None:
+        window.set_page("rag")
+        if not args.rag_ask:
+            return
+        window.rag_input.setText(args.rag_ask)
+        window._ask_rag()
 
-        QTimer.singleShot(
-            round((args.rag_switch_after or 1.0) * 1000.0) + 500, ask_rag
-        )
+    if args.rag_switch_after:
+        # The delay is honoured: switching immediately would ask the question
+        # before the page existed and silently do nothing.
+        QTimer.singleShot(round(args.rag_switch_after * 1000.0), show_rag_page)
+    elif args.rag_ask:
+        # No delay requested, so give the pipelines a moment to finish loading.
+        QTimer.singleShot(500, show_rag_page)
     if args.npu_toggle_after:
         QTimer.singleShot(
             round(args.npu_toggle_after * 1000.0),
