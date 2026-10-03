@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
@@ -1331,8 +1332,11 @@ class MainWindow(QMainWindow):
         self.rag_page = QWidget()
         self.stack.addWidget(self.demo_page)
         self.stack.addWidget(self.attract_page)
-        self.stack.addWidget(self.rag_page)
-        self.page_index = {"demo": 0, "attract": 1, "rag": 2}
+        # The Q&A is NOT added to the stack. It lives inside the demo page's
+        # splitter (see _build_demo_page) so the video and engine gauges stay
+        # visible while a question is answered. Adding it to the stack as well
+        # would parent it twice and it would never render.
+        self.page_index = {"demo": 0, "attract": 1}
         self.current_page = "demo"
         self._build_demo_page()
         self._build_attract_page()
@@ -1354,27 +1358,32 @@ class MainWindow(QMainWindow):
         does not compile on the NPU, and embedding on the NPU measured 1170 ms
         per query against 16 ms on the GPU.
         """
+        # The Q&A is reparented into the splitter on the demo page: it is a panel
+        # beside the pipeline, not a page that replaces it.
+        self.rag_page.setParent(self.rag_panel_host)
         root = QVBoxLayout(self.rag_page)
         root.setContentsMargins(
             THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
         )
         root.setSpacing(THEME.spacing_sm)
 
-        header = QHBoxLayout()
+        header = QVBoxLayout()
         header.addWidget(
             _label(
-                "Ask the OT security guide",
+                "Document Q&A",
                 size=THEME.rag_question_font,
                 bold=True,
             )
         )
-        header.addStretch(1)
+        header.addWidget(
+            _label(
+                "NIST SP 800-82r4 · Guide to OT Security",
+                size=THEME.rag_source_font,
+                color=THEME.text_muted,
+            )
+        )
         self.rag_engine_label = _label(
             "", size=THEME.rag_source_font, color=THEME.text_muted
-        )
-        self.rag_engine_label.setMaximumWidth(THEME.rag_engine_label_width)
-        self.rag_engine_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
         )
         header.addWidget(self.rag_engine_label)
         root.addLayout(header)
@@ -1396,7 +1405,7 @@ class MainWindow(QMainWindow):
         ask_row.addWidget(self.rag_ask_button)
         root.addLayout(ask_row)
 
-        columns = QHBoxLayout()
+        columns = QVBoxLayout()
         columns.setSpacing(THEME.spacing_md)
 
         answer_panel = _panel()
@@ -1410,13 +1419,43 @@ class MainWindow(QMainWindow):
         self.rag_answer = QLabel("Ask a question to see an answer, with the passages it came from.")
         self.rag_answer.setWordWrap(True)
         self.rag_answer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.rag_answer.setMinimumHeight(THEME.rag_answer_min_height)
+        self.rag_answer.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
+        )
+        # Scrollable, because a long answer is clipped rather than cut off: a
+        # half-sentence reads as a rendering fault.
+        answer_scroll = QScrollArea()
+        answer_scroll.setWidgetResizable(True)
+        answer_scroll.setWidget(self.rag_answer)
+        answer_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        answer_scroll.viewport().setStyleSheet(
+            f"background: {THEME.panel}; border: none;"
+        )
+        answer_scroll.verticalScrollBar().setStyleSheet(
+            f"background: {THEME.panel_alt}; border: none;"
+            f"width: {THEME.rag_scrollbar_width}px;"
+        )
         self.rag_answer.setStyleSheet(f"color: {THEME.text}; font-size: {THEME.rag_answer_font}px;")
-        answer_layout.addWidget(self.rag_answer, 1)
+        answer_layout.addWidget(answer_scroll, 1)
         self.rag_timing_label = _label("", size=THEME.rag_source_font, color=THEME.text_muted)
         answer_layout.addWidget(self.rag_timing_label)
         columns.addWidget(answer_panel, 1)
 
+        # The engine badge sits directly under the answer so a visitor reading
+        # it can see which engine produced it. It says GPU because that is what
+        # was measured: the LLM does not compile on the NPU, and NPU embedding
+        # measured 1170 ms/query against 16 ms on the GPU.
+        self.rag_engine_label.setStyleSheet(
+            f"color: {THEME.gpu}; font-size: {THEME.rag_source_font}px;"
+        )
+        self.rag_engine_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+        )
+        columns.addWidget(self.rag_engine_label)
+
         source_panel = _panel()
+        source_panel.setMinimumHeight(THEME.rag_source_min_height)
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(
             THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
@@ -1432,7 +1471,6 @@ class MainWindow(QMainWindow):
         self.rag_sources = QLabel("No passages retrieved yet.")
         self.rag_sources.setWordWrap(True)
         self.rag_sources.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.rag_sources.setFixedWidth(THEME.rag_passage_width)
         self.rag_sources.setStyleSheet(
             f"color: {THEME.text_muted}; font-size: {THEME.rag_source_font}px;"
         )
@@ -1440,7 +1478,6 @@ class MainWindow(QMainWindow):
         # a clipped passage is worse than one the visitor can scroll.
         source_scroll = QScrollArea()
         source_scroll.setWidgetResizable(True)
-        source_scroll.setFixedWidth(THEME.rag_passage_width)
         source_scroll.setWidget(self.rag_sources)
         source_scroll.setFrameShape(QFrame.Shape.NoFrame)
         source_scroll.viewport().setStyleSheet(
@@ -1458,7 +1495,11 @@ class MainWindow(QMainWindow):
         columns.addWidget(source_panel)
         root.addLayout(columns, 1)
 
-        self.rag_status = _label("Esc returns to the pipeline view.", color=THEME.text_muted)
+        self.rag_status = _label(
+            "Ask a question — the pipeline keeps running beside this panel.",
+            size=THEME.rag_source_font,
+            color=THEME.text_muted,
+        )
         root.addWidget(self.rag_status)
 
         self._init_rag()
@@ -1507,16 +1548,37 @@ class MainWindow(QMainWindow):
         self.rag_worker.failed.connect(self._on_rag_failed)
 
     def set_page(self, name: str) -> None:
-        """Switch the visible page. ``name`` is demo, attract or rag."""
+        """Show a page, or toggle the Q&A panel.
+
+        ``demo`` and ``attract`` are pages. ``rag`` is NOT a page: it is the
+        panel beside the pipeline, so showing it means revealing the second
+        splitter pane and leaving the video and gauges visible. That is the
+        point of the layout — a booth visitor should see detection running, a
+        document answer appearing, and the engine gauges moving for both.
+        """
+        if name == "rag":
+            self.toggle_rag_panel()
+            return
         index = self.page_index.get(name)
         if index is None:
             return
-        if name == "rag":
-            self.attract_timer.stop()
+        self.rag_panel_visible = False
+        self.rag_panel_host.setVisible(False)
         self.stack.setCurrentIndex(index)
         self.current_page = name
-        if name == "rag":
+
+    def toggle_rag_panel(self) -> None:
+        """Show or hide the Q&A panel without disturbing the running pipeline."""
+        visible = not self.rag_panel_visible
+        self.rag_panel_host.setVisible(visible)
+        self.rag_panel_visible = visible
+        if visible:
+            self.stack.setCurrentIndex(self.page_index["demo"])
+            self.current_page = "demo"
             self.rag_input.setFocus()
+        self.rag_ask_button.setEnabled(
+            visible and self.rag_worker is not None
+        )
 
     def _ask_rag(self) -> None:
         question = self.rag_input.text().strip()
@@ -1587,7 +1649,33 @@ class MainWindow(QMainWindow):
         self.rag_status.setText(detail.strip().splitlines()[-1] if detail.strip() else "Failed")
 
     def _build_demo_page(self) -> None:
-        root = QVBoxLayout(self.demo_page)
+        # The pipeline and the document Q&A live side by side in a splitter, not
+        # as separate pages. A booth visitor needs to see the detection running
+        # AND a document answer appearing AND the NPU/GPU/CPU gauges moving for
+        # both at once; hiding the gauges behind a full-screen page would hide
+        # the very evidence the demo exists to show.
+        self.demo_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.demo_splitter.setChildrenCollapsible(False)
+        self.demo_splitter.setHandleWidth(THEME.rag_splitter_handle)
+        self.demo_page_layout = QVBoxLayout(self.demo_page)
+        self.demo_page_layout.setContentsMargins(0, 0, 0, 0)
+        self.demo_page_layout.addWidget(self.demo_splitter)
+
+        self.pipeline_panel = QWidget()
+        self.rag_panel_host = QWidget()
+        self.demo_splitter.addWidget(self.pipeline_panel)
+        self.demo_splitter.addWidget(self.rag_panel_host)
+        self.demo_splitter.setStretchFactor(0, 1)
+        self.demo_splitter.setStretchFactor(1, 0)
+        self.demo_splitter.setSizes(
+            [THEME.design_width - THEME.rag_panel_width, THEME.rag_panel_width]
+        )
+        self.rag_panel_host.setFixedWidth(THEME.rag_panel_width)
+        # Hidden until R is pressed, so the default booth view is unchanged.
+        self.rag_panel_visible = False
+        self.rag_panel_host.setVisible(False)
+
+        root = QVBoxLayout(self.pipeline_panel)
         root.setContentsMargins(
             THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
             THEME.spacing_sm if self.compact_layout else THEME.spacing_md,
@@ -2411,17 +2499,6 @@ class MainWindow(QMainWindow):
             elif key == Qt.Key.Key_Q:
                 self.close()
             return
-        if self.current_page == "rag":
-            # On the document page only a few keys are meaningful. Escape leaves
-            # rather than quitting, so a visitor can go back without ending the
-            # demo.
-            if key == Qt.Key.Key_Escape:
-                self.set_page("demo")
-            elif key == Qt.Key.Key_Q:
-                self.close()
-            else:
-                super().keyPressEvent(event)
-            return
         if key in SCENARIO_KEYS:
             self.switch_scenario(SCENARIO_KEYS[key])
         elif key == Qt.Key.Key_R:
@@ -2438,7 +2515,6 @@ class MainWindow(QMainWindow):
             self.change_density(-1)
         elif key == Qt.Key.Key_A:
             self.set_attract_mode(not self.attract_mode)
-            self.set_page("demo")
         elif key == Qt.Key.Key_F1:
             self._open_operator()
         elif key == Qt.Key.Key_F11:

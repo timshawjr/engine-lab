@@ -94,6 +94,15 @@ class Theme:
     rag_answer_font: int = 19
     rag_source_font: int = 14
     rag_passage_width: int = 620
+    # The Q&A panel sits beside the pipeline in a resizable splitter, so the
+    # video, the engine gauges and a document answer are all visible together.
+    rag_panel_width: int = 620
+    rag_splitter_handle: int = 6
+    # Minimum heights inside the panel. Without these the answer box clipped
+    # mid-sentence and the passages pane collapsed to a sliver, because the
+    # pipeline column claims all the vertical space in the splitter.
+    rag_answer_min_height: int = 150
+    rag_source_min_height: int = 220
     # Characters of each retrieved passage shown as evidence. Cut on a word
     # boundary, so the real value only affects where the excerpt stops.
     # Characters of each retrieved passage shown as evidence. Set high enough

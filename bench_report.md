@@ -1150,3 +1150,53 @@ would make a routine green selftest slow. It is verified by the booth run instea
 
 Preflight gained four rows and fails rather than warns on a broken setup — verified by
 renaming `index.npy` away and observing `FAIL rag corpus/index alignment` with exit 1.
+
+## Document Q&A docked beside the pipeline (layout change)
+
+The Q&A was originally a full-screen page, which replaced the pipeline view. On a
+booth that hides the evidence the demo exists to show: a visitor sees a document answer
+but not the video running or the engine gauges moving. Pressing `R` now reveals a
+resizable splitter pane instead, so detection, the NPU/GPU/CPU gauges and a document
+answer are all visible at once. The pipeline never stops, and `Esc` no longer returns
+from a page — the panel is simply hidden again.
+
+### Contention measured, not assumed
+
+Both paths use the GPU, so this was measured rather than argued. Manufacturing at
+density 2, same question, pipeline alone versus pipeline plus Q&A:
+
+| | Pipeline alone | Pipeline + Q&A (3 runs) | Delta |
+|---|---|---|---|
+| inferences/s | 153.3 | 164.6 | +7.3% |
+| detections/s | 204.4 | 219.4 | +7.3% |
+| e2e p50 ms | 36.3 | 37.8 | +4.1% |
+| NPU gauge | 23.5% | 21.4% | -2.1 pts |
+| GPU gauge | 39.4% | 41.6% | +2.2 pts |
+| CPU gauge | 83.5% | 86.5% | +3.0 pts |
+
+**Throughput went UP while Q&A was running, which is not a real gain.** The run-to-run
+spread across the three docked runs was 29.5 inferences/s, far larger than the
+11.3-point delta. The pipeline's own noise floor dominates, so the honest claim is:
+
+> No measurable throughput impact from document Q&A. GPU load rises about 2 points and
+> latency about 1.5 ms p50, both within run-to-run variation. Detection FPS holds at 24.
+
+The `+7.3%` is deliberately NOT quoted as a result anywhere; it is noise.
+
+What the demo *can* truthfully show: the GPU gauge moves while the LLM generates, and
+the pipeline's own FPS/DET/s readouts stay flat.
+
+One real cost, measured: generation is ~3,009 ms solo and ~3,847 ms docked — the LLM
+slows about 25% under GPU contention. The video pipeline does not notice; the Q&A does.
+Both figures are shown per question in the panel, from that request's own timings.
+
+### Defect found and fixed during this change
+
+`self.rag_page` was both added to the `QStackedWidget` and reparented into the splitter,
+so it was parented twice and rendered nothing — the panel was invisible with no error.
+The page stack now holds only `demo` and `attract`.
+
+Layout defects found by looking at screenshots, not by exit codes: the answer box
+clipped mid-sentence and the passages pane collapsed to a sliver, because the pipeline
+column claimed all vertical space in the splitter. Fixed with minimum heights on both
+panels and a scroll area around the answer.
