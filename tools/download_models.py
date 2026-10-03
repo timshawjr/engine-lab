@@ -103,6 +103,68 @@ POSE_DEMO_URL = (
     "demos/human_pose_estimation_demo/python/human_pose_estimation_demo.py"
 )
 
+# The two RAG page models (Task 2 of the RAG page plan). They are Hugging Face
+# OpenVINO repos like the entries in config/models.json, but they are consumed
+# by GenAI pipelines, not by the static-shape compile matrix, so they are
+# registered here instead of in config/models.json: that keeps preflight's
+# compile/availability probes and tools/verify_sources.py focused on the demo
+# models, and tools/preflight.py verifies these two at file level via
+# _rag_checks (config/rag.json paths).
+#
+# "sha256" records the reviewed digest of each IR file, computed from the bytes
+# already on disk (models/Qwen3-*/openvino_model.{xml,bin}); a fresh download
+# can be compared against it. "genai": true marks the entry as a GenAI
+# pipeline model: no classification labels are fetched (the HF config.json of
+# these repos has no "labels" field), and HF_HUB_DISABLE_XET=1 is set for the
+# download -- measured 2026-10-02: with Xet enabled the large
+# openvino_model.bin downloads fail and leave 0-byte .incomplete files, which
+# surface later as a confusing "tokenizer was not provided" error instead of a
+# download error.
+RAG_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "Qwen3-Embedding-0.6B-int8-ov",
+        "role": "embedding",
+        "task": "text_embedding",
+        "task_label": "Text embedding",
+        "prec": "INT8",
+        "source": "huggingface",
+        "repo": "OpenVINO/Qwen3-Embedding-0.6B-int8-ov",
+        "files": [
+            "openvino_model.xml",
+            "openvino_model.bin",
+        ],
+        "sha256": {
+            "openvino_model.xml": "fc0218b8973d09f43e7f8175760b69d4f2a9c9bab6e354aca8cee639d9b57e15",
+            "openvino_model.bin": "b88066b1898f5e74eb31fe87578f10ab3d01709765a09bd8c4ea4fe256f62bb4",
+        },
+        "genai": True,
+        "labels": None,
+        "gflops": None,
+        "spec_url": "https://huggingface.co/OpenVINO/Qwen3-Embedding-0.6B-int8-ov",
+    },
+    {
+        "id": "Qwen3-1.7B-int4-ov",
+        "role": "generation",
+        "task": "text_generation",
+        "task_label": "Text generation",
+        "prec": "INT4",
+        "source": "huggingface",
+        "repo": "OpenVINO/Qwen3-1.7B-int4-ov",
+        "files": [
+            "openvino_model.xml",
+            "openvino_model.bin",
+        ],
+        "sha256": {
+            "openvino_model.xml": "8d5e2cd13e046009835c488c2005d8f477ae8a0302e3e999cbd430ba0af9af19",
+            "openvino_model.bin": "2f15d719cab2e475444ff84d77d432ecf757e0ec5b93dc1b48710802f96ef34f",
+        },
+        "genai": True,
+        "labels": None,
+        "gflops": None,
+        "spec_url": "https://huggingface.co/OpenVINO/Qwen3-1.7B-int4-ov",
+    },
+]
+
 
 def _load_config() -> dict[str, Any]:
     with CONFIG_PATH.open("r", encoding="utf-8") as handle:
@@ -309,7 +371,7 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
     }
     failures: list[str] = []
 
-    for model in config["models"]:
+    for model in config["models"] + RAG_MODELS:
         model_id = model["id"]
         model_dir = ROOT / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -328,6 +390,14 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
             manifest["models"][model_id] = entry
             print(f"  SKIP: source 'converted' - build locally: {model.get('conversion_tool')}")
             continue
+        # GenAI pipeline models (the RAG page pair) download their large
+        # openvino_model.bin over plain HTTP: with the Xet backend enabled the
+        # transfer fails and leaves a 0-byte .incomplete file, which surfaces
+        # later as "tokenizer was not provided" instead of a download error.
+        disable_xet = bool(model.get("genai"))
+        previous_xet = os.environ.get("HF_HUB_DISABLE_XET")
+        if disable_xet:
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
         try:
             for kind, url in _model_files(model):
                 filename = _target_name(model, kind, url)
@@ -350,7 +420,14 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
                 }
                 print(f"  {filename}: {status} ({destination.stat().st_size} bytes, sha256={digest})")
 
-            if model["source"] == "huggingface":
+            if model.get("genai"):
+                # These repos carry no classification labels; their HF config.json
+                # has no "labels" field, so there is nothing to fetch or write.
+                label_info = {
+                    "status": "not applicable - GenAI pipeline model",
+                    "source_url": model["spec_url"],
+                }
+            elif model["source"] == "huggingface":
                 label_info = _write_hf_labels(model, model_dir, force)
             else:
                 label_info = _write_omz_labels(model, model_dir, force)
@@ -360,6 +437,12 @@ def download_models(config: dict[str, Any], force: bool, include_media: bool) ->
             entry["error"] = f"{type(exc).__name__}: {exc}"
             failures.append(f"model {model_id}: {exc}")
             print(f"  FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            if disable_xet:
+                if previous_xet is None:
+                    os.environ.pop("HF_HUB_DISABLE_XET", None)
+                else:
+                    os.environ["HF_HUB_DISABLE_XET"] = previous_xet
         manifest["models"][model_id] = entry
 
     if include_media:

@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 MODELS_CONFIG = ROOT / "config" / "models.json"
 PROFILES_CONFIG = ROOT / "config" / "platform_profiles.json"
 TELEMETRY_MAP = ROOT / "config" / "telemetry_map.json"
+RAG_CONFIG = ROOT / "config" / "rag.json"
 CACHE_DIR = ROOT / "cache"
 MINIMUM_NPU_DRIVER = "32.0.100.5540"
 DEVICES = ("NPU", "GPU", "CPU")
@@ -192,6 +193,106 @@ def _dependency_checks(report: Preflight) -> None:
         version,
         "Install Microsoft Visual C++ Redistributable 2015-2022 x64, then reboot if required",
     )
+
+
+def _rag_checks(report: Preflight) -> None:
+    """File-level RAG wiring: GenAI version, model directories, corpus/index alignment.
+
+    Reads the paths from config/rag.json (repo-root-relative, exactly as the
+    bake wrote them) and verifies files on disk. Deliberately does NOT compile
+    the embedding or generation model: the 2.4 s + 3.4 s GenAI pipeline loads
+    belong to --selftest, and preflight must stay fast. A truncated download
+    (the 0-byte .incomplete failure the Xet backend produces) is caught here
+    by the non-zero file check.
+    """
+    try:
+        rag_config = json.loads(RAG_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        report.add(
+            "rag",
+            "rag.json",
+            "FAIL",
+            str(exc),
+            "Restore config/rag.json (written by tools/build_rag_corpus.py)",
+        )
+        return
+
+    try:
+        import openvino_genai
+
+        version = openvino_genai.__version__
+        report.add(
+            "rag",
+            "openvino_genai",
+            "PASS" if version.startswith("2026.4.0.0") else "FAIL",
+            f"runtime reports {version}",
+            "Install requirements.txt with .venv\\Scripts\\python.exe -m pip install -r requirements.txt",
+        )
+    except ImportError as exc:
+        report.add(
+            "rag",
+            "openvino_genai",
+            "FAIL",
+            f"not importable: {exc}",
+            "Install requirements.txt in the repo-local .venv",
+        )
+
+    for key in ("embedding_model", "generation_model"):
+        relative = str(rag_config.get(key, ""))
+        model_dir = ROOT / relative
+        problems: list[str] = []
+        if not model_dir.is_dir():
+            problems.append(f"missing directory {relative}")
+        else:
+            for name in ("openvino_model.xml", "openvino_model.bin"):
+                path = model_dir / name
+                if not path.is_file():
+                    problems.append(f"missing {name}")
+                elif path.stat().st_size <= 0:
+                    problems.append(f"empty {name}")
+        if problems:
+            report.add(
+                "rag",
+                key,
+                "FAIL",
+                "; ".join(problems),
+                "Run .venv\\Scripts\\python.exe tools\\download_models.py",
+            )
+        else:
+            report.add(
+                "rag",
+                key,
+                "PASS",
+                (
+                    f"{relative}: openvino_model.xml "
+                    f"{(model_dir / 'openvino_model.xml').stat().st_size} bytes, "
+                    f"openvino_model.bin {(model_dir / 'openvino_model.bin').stat().st_size} bytes"
+                ),
+            )
+
+    try:
+        corpus_path = ROOT / str(rag_config["corpus_path"])
+        index_path = ROOT / str(rag_config["index_path"])
+        corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+        chunks = corpus["chunks"] if isinstance(corpus, dict) else corpus
+        index = np.load(index_path)
+        chunk_count = len(chunks)
+        index_rows = int(index.shape[0])
+        report.add(
+            "rag",
+            "corpus/index alignment",
+            "PASS" if chunk_count == index_rows else "FAIL",
+            f"corpus chunks={chunk_count}, index rows={index_rows}",
+            "Re-run the corpus bake (tools/build_rag_corpus.py) so chunk count and index rows agree",
+        )
+    except (OSError, KeyError, json.JSONDecodeError, ValueError) as exc:
+        report.add(
+            "rag",
+            "corpus/index alignment",
+            "FAIL",
+            f"{type(exc).__name__}: {exc}",
+            "Restore models/rag/corpus.json and models/rag/index.npy",
+        )
 
 
 def _device_checks(report: Preflight, core: ov.Core) -> tuple[list[Any], list[Any], set[str]]:
@@ -993,6 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
         "Install Windows 11 24H2 or later and reboot",
     )
     _dependency_checks(report)
+    _rag_checks(report)
     try:
         config = json.loads(MODELS_CONFIG.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

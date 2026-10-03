@@ -5,3 +5,5 @@ numpy>=2.0,<3
 opencv-python>=4.10,<6
 huggingface_hub>=0.30
 pyyaml>=6.0
+openvino-genai==2026.4.0.0
+openvino-tokenizers==2026.4.0.0
