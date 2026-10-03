@@ -1,0 +1,20 @@
+{
+  "document": {
+    "title": "NIST SP 800-82r4 ipd — Guide to Operational Technology (OT) Security",
+    "source_pdf": "NIST.SP.800-82r4.ipd.pdf",
+    "pages": 321,
+    "note": "Initial public draft. Extracted from the PDF supplied for this demo."
+  },
+  "corpus_path": "models/rag/corpus.json",
+  "index_path": "models/rag/index.npy",
+  "embedding_model": "models/Qwen3-Embedding-0.6B-int8-ov",
+  "generation_model": "models/Qwen3-1.7B-int4-ov",
+  "device": "GPU",
+  "device_label": "GPU",
+  "top_k": 3,
+  "embedding_dim": 1024,
+  "max_new_tokens": 220,
+  "query_instruction": "Instruct: Given a question, retrieve relevant passages that answer the question\nQuery: ",
+  "abstention_marker": "NOT IN PROVIDED PAGES",
+  "system_prompt": "You answer questions about NIST SP 800-82r4 using ONLY the numbered passages provided. Cite the page as [p.N]. If the passages do not contain the answer, reply with exactly NOT IN PROVIDED PAGES and nothing else. Never use knowledge from outside the passages."
+}
