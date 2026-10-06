@@ -1,0 +1,205 @@
+================================================================================
+ ENGINE LAB - HOW TO RUN THE BOOTH DEMO
+================================================================================
+
+You do NOT need to install anything. No Python, no internet, no administrator
+rights. Everything the demo needs is inside the folder you were sent.
+
+
+--------------------------------------------------------------------------------
+ STEP 1 - PUT THE FOLDER SOMEWHERE PERMANENT
+--------------------------------------------------------------------------------
+
+You received a file called:
+
+    engine-lab-portable.zip        (about 2.6 GB)
+
+1. Copy it somewhere permanent on the booth machine, for example:
+
+       C:\EngineLab\
+
+   Do NOT run it from inside the zip. Do NOT leave it in Downloads.
+
+   IMPORTANT - do NOT put it on a network share or a USB stick and run it
+   from there. Windows can be slow to load 2.6 GB from those, and the demo
+   will start badly. Copy it to the local disk first.
+
+2. Right-click the zip  ->  "Extract All..."
+
+3. Extract it to the same place, so you end up with:
+
+       C:\EngineLab\engine-lab-portable\
+
+   Inside that folder you should see these, among others:
+
+       Start Engine Lab.bat
+       Verify Booth.bat
+       README-PORTABLE.md
+       python\             (the demo's own Python - do not delete)
+       models\             (2.3 GB of models - do not delete)
+       media\              (the video clips)
+
+4. If you extracted and then have to go one level deeper to find
+   "Start Engine Lab.bat", that is fine - just remember that folder is where
+   you double-click things. You can rename "engine-lab-portable" to anything
+   you like, or move it anywhere. It does not care.
+
+   Takes a few minutes to extract. That is normal.
+
+
+--------------------------------------------------------------------------------
+ STEP 2 - CHECK THE MACHINE BEFORE THE SHOW (do this once)
+--------------------------------------------------------------------------------
+
+Double-click:
+
+    Verify Booth.bat
+
+A black window opens and prints several checks. Takes about 2-3 minutes the
+first time.
+
+You are looking for TWO things at the end:
+
+    "0 WARN, 0 FAIL"      <- from the preflight section
+    "0 FAIL"              <- from the self-test section
+
+If you see both, this machine is ready. Press any key to close the window.
+
+If the FIRST run reports a failure about "availability", just run
+Verify Booth.bat a second time. The first run is warming up a cache; the
+second run should be clean.
+
+If it reports anything else as FAIL, STOP and send the whole window contents
+to Tim before the show. Do not try to fix it yourself and do not skip it.
+
+
+--------------------------------------------------------------------------------
+ STEP 3 - START THE DEMO
+--------------------------------------------------------------------------------
+
+Double-click:
+
+    Start Engine Lab.bat
+
+The demo window opens. It starts on the "Retail" scenario.
+
+FIRST LAUNCH IS SLOW. Give it up to about 30 seconds the very first time after
+extracting - it is compiling the models for this machine's hardware. Every
+launch after that is much faster.
+
+A black window may flash and disappear when you double-click. That is normal -
+it is the launcher handing over to the demo. The demo window is what matters.
+
+
+--------------------------------------------------------------------------------
+ USING IT
+--------------------------------------------------------------------------------
+
+Keyboard:
+
+    1 - 6            Switch scenario:
+                       1  Retail
+                       2  Metro / smart city
+                       3  Manufacturing
+                       4  Education
+                       5  Health
+                       6  Federal / aerospace
+
+    R                Open the Document Q&A panel (ask questions about the
+                     NIST OT security guide)
+
+    Esc  or Close    Put the Document Q&A panel away
+
+    N                Turn the NPU on/off   (watch the gauges change)
+    G                Turn the GPU on/off
+    C                Cycle device mode
+
+    +  /  -          Change density: 1, 2, 4, 6, 8
+                     Higher density = more video streams = more load
+
+    A                Attract mode (unattended loop for an empty booth)
+    F1               Operator overlay (which engine each model ran on)
+    F11              Fullscreen
+    Q                Quit
+
+
+--------------------------------------------------------------------------------
+ THE TWO THINGS THAT LOOK LIKE PROBLEMS BUT ARE NOT
+--------------------------------------------------------------------------------
+
+1. The FIRST press of R pauses for 5-10 seconds.
+
+   The document Q&A has to load two language models the first time. After
+   that, answers take about 1-2 seconds.
+
+   FIX: press R once BEFORE visitors arrive, ask any question, then press Esc.
+   Now it is warm and instant for the rest of the day.
+
+2. The FIRST launch after extracting takes much longer than later launches.
+
+   The machine is compiling the models for its own hardware. This is normal.
+   The second launch onward is fast.
+
+
+--------------------------------------------------------------------------------
+ QUESTIONS YOU WILL BE ASKED
+--------------------------------------------------------------------------------
+
+"Does it need internet?"
+    No. Unplug the network if you want to prove it. Everything - the models,
+    the video, the document - is inside the folder.
+
+"Is this really running on the machine, not in the cloud?"
+    Yes. One laptop, one chip. Press F1 to see which engine each model used.
+
+"Does the Q&A know everything?"
+    No. It only answers from the NIST OT security guide that is bundled with
+    it, and it shows you the pages it used so you can check. If it cannot find
+    an answer it says so.
+
+For the full sales pitch, measured numbers, and the questions to avoid, read
+SALES-GUIDE.md in the folder. For the raw measurements, bench_report.md.
+
+
+--------------------------------------------------------------------------------
+ IF SOMETHING GOES WRONG
+--------------------------------------------------------------------------------
+
+Demo will not open at all
+    Check you extracted the whole folder. If "python" or "models" is missing
+    from the folder, the copy is incomplete - copy it again.
+
+A check failed in Verify Booth.bat
+    Send Tim the full window text. Do not demo until it is resolved.
+
+"NPU worked yesterday but not today"
+    An Intel driver update has invalidated a cache. Delete the folder called
+    "cache" sitting next to "engine-lab-portable", then run Verify Booth.bat
+    again. It rebuilds automatically.
+
+The video looks stuck or very slow
+    Press C to cycle the device mode back to spread, and press N then G once
+    to make sure both engines are on. Give it 10 seconds to recover.
+
+The boxes on the video do not match what is moving
+    Press N and G off and back on - that re-aligns the video. It should
+    settle within a second or two.
+
+Anything else
+    Close the demo with Q, then start it again with Start Engine Lab.bat.
+    If it repeats, photograph the screen and send it to Tim.
+
+
+--------------------------------------------------------------------------------
+ ONE IMPORTANT NOTE FOR WHOEVER BUILT THIS
+--------------------------------------------------------------------------------
+
+This folder is a snapshot of the software at a point in time. If the code
+changes, this folder does NOT update itself. It must be rebuilt.
+
+See docs/BUILD-PORTABLE.md in the source repository.
+
+Do not "update" anything inside this folder by hand, and do not run
+"pip install" in it. It is deliberately frozen so it cannot break at a show.
+
+================================================================================
