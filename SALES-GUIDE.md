@@ -56,6 +56,71 @@ On a **second machine**: `setup-booth-machine.bat` → `download-models.bat` →
 
 ---
 
+## Reading the three header numbers
+
+Under the scenario title are three live readouts. They answer three different
+questions, in order, and that order is the pitch:
+
+| Readout | Question it answers | What it actually counts |
+|---|---|---|
+| **FPS** | Is it *live*? | Frames per second the pipeline is processing |
+| **DET/s** | Is it doing *real work*? | Detection boxes per second, summed across all active streams |
+| **EVENTS** | Does it produce a *business answer*? | Tracked business events in a rolling 60-second window |
+
+### Why DET/s matters
+
+**It is the volume of model work, not a quality score.** One frame with six
+people on screen produces six detections; that is six, not one. So DET/s rises
+with how busy the scene is and with how many streams run.
+
+It is the number that shows the silicon is genuinely working. A demo that shows
+only FPS can be faking it with a video player — 24 FPS proves frames are moving,
+not that anything is being inferred. DET/s proves the models ran on those frames.
+
+On the demo (manufacturing, 2 streams): **204–260 DET/s** while FPS holds at 24.
+That gap is the point — 24 frames each carrying several objects.
+
+### Why EVENTS matters
+
+**It is the number a customer actually buys.** DET/s is raw model output: every
+box, every frame, noisy and repetitive. A person standing in shot for ten seconds
+produces *hundreds* of detections and exactly **one** event, because events are:
+
+- **tracked** — the same person across frames is one identity, not 240 detections;
+- **zone-gated** — only counts when they enter a defined area;
+- **cooldown-suppressed** — one person walking through does not fire repeatedly.
+
+The ratio between the two is the story: **hundreds of detections per second
+collapse to dozens of events.** That collapse is the application doing its job,
+turning pixels into something an operator can act on. A camera that reports
+"12,000 detections" is a science project; one that reports "3 people entered the
+restricted zone" is a product.
+
+Events are counted on the **CPU**, deliberately, because that is where headroom
+exists — the NPU and GPU are busy inferring.
+
+### The event types on screen
+
+Six, across the scenarios:
+
+| Event | Meaning | Scenarios |
+|---|---|---|
+| `person_counted` | A person entered a defined zone | retail, metro, manufacturing, education |
+| `vehicle_counted` | A vehicle entered a defined zone | metro |
+| `object_classified` | A crop was classified (e.g. `ppe worn`, `no ppe`, a product) | retail, manufacturing |
+| `object_picked_up` | A tracked object left a shelf | retail |
+| `plate_detected` | A licence plate was read | federal |
+| `posture_alert` | A fall or unsafe posture was detected | education, health |
+
+Manufacturing on the demo machine shows **54–55 events** in the rolling window —
+mostly `person_counted` plus PPE classifications.
+
+### The line to use
+
+> FPS tells you it's live, detections per second tell you the models are really
+> running, and events tell you what you'd actually act on. Watch the middle number
+> be large and the last one be small — that's the tracking filter doing its job.
+
 ## Measured numbers you can quote
 
 Pipeline, manufacturing at density 2 (from `bench_report.md`):
