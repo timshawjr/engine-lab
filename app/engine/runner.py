@@ -445,12 +445,6 @@ class RetailVideoClock(QThread):
     frame_ready = Signal(object, int)
     failed = Signal(str)
 
-    #: Frame within the current file that is on screen. Distinct from the
-    #: cumulative counter emitted with frame_ready, which climbs past the file
-    #: length because the clip loops. Anything syncing a second capture to this
-    #: one must use the file position, not the counter.
-    last_position: int = -1
-
     def __init__(
         self,
         video_path: Path | None,
@@ -513,15 +507,6 @@ class RetailVideoClock(QThread):
                         next_deadline = time.perf_counter()
                         continue
                 frame_index += 1
-                # Publish the file position, not the cumulative counter. This
-                # clip loops, so frame_index climbs past the file length while a
-                # capture wraps at it; anything trying to seek to frame_index
-                # lands past the end of the file. last_position is the frame
-                # within the file that is actually on screen.
-                try:
-                    self.last_position = int(capture.get(cv2.CAP_PROP_POS_FRAMES))
-                except Exception:  # noqa: BLE001 - backend-dependent
-                    self.last_position = -1
                 self.frame_ready.emit(InferenceThread._to_qimage(frame), frame_index)
                 effective_fps = source_fps
                 if self._target_fps > 0 and source_fps:
