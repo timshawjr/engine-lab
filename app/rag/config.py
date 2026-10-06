@@ -17,7 +17,11 @@ DEFAULT_CONFIG_PATH = Path("config/rag.json")
 # measured facts about this feature rather than preferences.
 FALLBACK: dict[str, Any] = {
     "top_k": 3,
-    "max_new_tokens": 220,
+    # Answer budget. Measured on the demo machine for a typical question:
+    #   220 tokens -> 3237 ms,  96 -> 1861 ms,  48 -> 1010 ms,  24 -> 570 ms,
+    # and the 24-token answer was already complete. The long budget bought a tail
+    # nobody read while the wait read as a hang, so it is deliberately short.
+    "max_new_tokens": 64,
     "device": "GPU",
     "device_label": "GPU",
     "abstention_marker": "NOT IN PROVIDED PAGES",

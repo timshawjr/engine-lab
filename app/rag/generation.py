@@ -29,6 +29,13 @@ IM_END = "<|im_end|>"
 EMPTY_THINK = "<think>\n\n</think>\n\n"
 
 
+#: Shown while the question is embedded and the passages ranked, then while the
+#: answer is written. Generation dominates the wait, so a panel that says which
+#: stage it is in reads as progress rather than a freeze at a booth.
+RETRIEVING_STATUS = "Retrieving passages from NIST SP 800-82r4..."
+GENERATING_STATUS = "Writing the answer from those passages..."
+
+
 def build_prompt(system: str, passages: list[Passage], question: str) -> str:
     """Build the ChatML prompt, with the assistant turn prefilled to skip reasoning.
 
@@ -74,7 +81,14 @@ def is_abstention(answer: str, marker: str) -> bool:
     text = (answer or "").strip()
     if not text:
         return False
-    return marker.strip().lower() in text.lower()
+    needle = marker.strip().lower()
+    if needle in text.lower():
+        return True
+    # A tight answer budget can cut the refusal mid-phrase ("NOT IN PROVIDED").
+    # Matching the marker's first two words keeps that legible as a refusal
+    # rather than showing a visitor a truncated shrug.
+    head = " ".join(needle.split()[:2])
+    return len(head) > 3 and head in text.lower()
 
 
 def generate(pipeline: object, prompt: str) -> str:

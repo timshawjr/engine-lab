@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 
-from .generation import build_generation_config, build_prompt, generate, is_abstention
+from .generation import (
+    GENERATING_STATUS,
+    build_generation_config,
+    build_prompt,
+    generate,
+    is_abstention,
+)
 from .retrieval import Passage, embed_query, retrieve
 
 LOGGER = logging.getLogger(__name__)
@@ -59,6 +65,7 @@ class RagBackends:
     top_k: int
     max_new_tokens: int
     embedding_dim: int = 1024
+    generating_status: str = ""
 
 
 class RagWorker(QObject):
@@ -67,6 +74,9 @@ class RagWorker(QObject):
     answered = Signal(object)
     failed = Signal(str)
     busy_changed = Signal(bool)
+    #: Which stage the request is in, so the panel shows progress instead of
+    #: looking frozen for the duration of generation.
+    status_changed = Signal(str)
 
     # Internal hand-off from the UI thread to the worker thread. Declared as a
     # signal rather than a direct call because a plain method call would run on
@@ -140,6 +150,10 @@ class RagWorker(QObject):
                 backends.index, backends.passages, query_vec, backends.top_k
             )
             embed_ms = (time.perf_counter() - started) * 1000.0
+
+            # Generation dominates the wait, so say so rather than leaving the
+            # panel showing the retrieval message for the whole of it.
+            self.status_changed.emit(backends.generating_status)
 
             started = time.perf_counter()
             prompt = build_prompt(backends.system_prompt, passages, question)
@@ -222,4 +236,5 @@ def load_backends(config: dict, root) -> RagBackends:
         top_k=int(config.get("top_k", 3)),
         max_new_tokens=int(config.get("max_new_tokens", 220)),
         embedding_dim=int(config.get("embedding_dim", 1024)),
+        generating_status=GENERATING_STATUS,
     )

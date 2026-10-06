@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.rag.config import load_rag_backends, load_rag_config
+from app.rag.generation import GENERATING_STATUS, RETRIEVING_STATUS
 from app.rag.worker import RagWorker
 from app.engine.availability import AvailabilityMatrix
 from app.engine.device_policy import DENSITIES, DeviceMode, DevicePolicy, PolicySnapshot
@@ -1546,6 +1547,12 @@ class MainWindow(QMainWindow):
         self.rag_worker = RagWorker(backends, parent=self)
         self.rag_worker.answered.connect(self._on_rag_answered)
         self.rag_worker.failed.connect(self._on_rag_failed)
+        self.rag_worker.status_changed.connect(self._on_rag_status)
+
+    def _on_rag_status(self, message: str) -> None:
+        """Show which stage is running so a wait reads as progress, not a freeze."""
+        if message:
+            self.rag_answer.setText(message)
 
     def set_page(self, name: str) -> None:
         """Show a page, or toggle the Q&A panel.
@@ -1596,10 +1603,10 @@ class MainWindow(QMainWindow):
             self.rag_status.setText("Document Q&A unavailable.")
             return
         self.rag_ask_button.setEnabled(False)
-        self.rag_answer.setText("Retrieving passages and answering...")
+        self.rag_answer.setText(RETRIEVING_STATUS)
         self.rag_sources.setText("")
         self.rag_timing_label.setText("")
-        self.rag_status.setText("Working — the pipeline view is still live behind this page.")
+        self.rag_status.setText("The pipeline keeps running — this panel is answering alongside it.")
         self.rag_worker.ask(question)
 
     def _on_rag_answered(self, answer: object) -> None:
