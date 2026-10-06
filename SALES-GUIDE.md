@@ -51,8 +51,10 @@ F11                   fullscreen
 Q                     quit
 ```
 
-On a **second machine**: `setup-booth-machine.bat` → `download-models.bat` →
-`verify-booth.bat`. See `START-HERE.md`.
+On a **second machine**: install **Python 3.12** (tick "Add python.exe to PATH"),
+then `setup-booth-machine.bat` → `download-models.bat` → `verify-booth.bat`.
+See `START-HERE.md`. Python 3.12 is required — the app checks it and the pinned
+wheels are built for it.
 
 ---
 

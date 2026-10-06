@@ -5,6 +5,19 @@ administrator rights, no registry changes.
 
 ## Run these three, in order
 
+**Prerequisite: Python 3.12** (3.12.x — not 3.11, not 3.13).
+
+Download: https://www.python.org/downloads/release/python-31210/
+
+During install, **tick "Add python.exe to PATH"**. That is the only thing you need
+to install by hand; everything else comes from the scripts below. No
+administrator rights are required.
+
+The version matters: the application checks it at startup and the pinned OpenVINO
+and PySide6 wheels are built for 3.12. `setup-booth-machine.bat` refuses to run on
+any other version and tells you so, rather than failing later with a confusing
+package error.
+
 | Step | File | What it does | Time |
 |---|---|---|---|
 | 1 | `setup-booth-machine.bat` | Creates the pinned venv, installs dependencies | ~5 min (needs network) |
