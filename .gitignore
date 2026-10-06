@@ -1,5 +1,10 @@
 .venv/
-models/
+# Vision models are 2.3 GB and are fetched by download-models.bat. The baked
+# document corpus and embedding index under models/rag/ ARE tracked (3 MB): the
+# source PDF is not shipped and the runtime has no PDF parser, so a clone would
+# otherwise have no way to answer questions.
+models/*
+!models/rag/
 media/
 cache/
 logs/

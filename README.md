@@ -78,7 +78,7 @@ The development-only review runner uses the real scenario worker and retains fra
 without changing the production dependency set:
 
 ```powershell
-$env:PYTHONPATH = "C:\Users\Intel Demo\AppData\Local\Temp\opencode\engine-lab-review-deps"
+$env:ENGINE_LAB_REVIEW_DEPS = "$HOME\engine-lab-review-deps"   # dev-only extras, if present
 $env:QT_QPA_PLATFORM = "offscreen"
 .venv\Scripts\python.exe tools\review_sessions.py --scenario retail --seconds 60 --output logs\review-retail
 .venv\Scripts\python.exe tools\review_sessions.py --scenario health --seconds 60 --output logs\review-health

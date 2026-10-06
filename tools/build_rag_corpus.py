@@ -40,7 +40,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-SRC = Path(r"C:\Users\Intel Demo\Downloads\NIST.SP.800-82r4.ipd.pdf")
+# The source PDF is NOT shipped with the repo, and the baked output is committed
+# instead, so nobody has to rebuild this. The path is therefore only a default
+# for the developer who owns the document; override it on the command line.
+DEFAULT_SRC = Path.home() / "Downloads" / "NIST.SP.800-82r4.ipd.pdf"
 OUT_DIR = ROOT / "models" / "rag"
 CORPUS_PATH = OUT_DIR / "corpus.json"
 INDEX_PATH = OUT_DIR / "index.npy"
@@ -274,7 +277,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write corpus.json only; skip the GPU embedding pass",
     )
+    parser.add_argument(
+        "--source",
+        type=Path,
+        default=DEFAULT_SRC,
+        help="path to the source PDF (not shipped with the repo; the baked "
+             "output under models/rag is committed instead)",
+    )
     args = parser.parse_args(argv)
+    global SRC
+    SRC = args.source
 
     if not SRC.is_file():
         print(f"ERROR: source PDF not found: {SRC}", file=sys.stderr)

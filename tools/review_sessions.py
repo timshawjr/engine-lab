@@ -18,7 +18,15 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEW_DEPS = Path(r"C:\Users\Intel Demo\AppData\Local\Temp\opencode\engine-lab-review-deps")
+# Optional dev-only dependencies for the review harness. The repo's pinned venv
+# is enough to run the demo; this only matters when re-running a clip review.
+# Override with ENGINE_LAB_REVIEW_DEPS.
+REVIEW_DEPS = Path(
+    os.environ.get(
+        "ENGINE_LAB_REVIEW_DEPS",
+        Path.home() / "engine-lab-review-deps",
+    )
+)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 if REVIEW_DEPS.is_dir() and str(REVIEW_DEPS) not in sys.path:
