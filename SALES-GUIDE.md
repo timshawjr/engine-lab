@@ -101,19 +101,70 @@ exists — the NPU and GPU are busy inferring.
 
 ### The event types on screen
 
-Six, across the scenarios:
+Six types exist, across the scenarios:
 
 | Event | Meaning | Scenarios |
 |---|---|---|
-| `person_counted` | A person entered a defined zone | retail, metro, manufacturing, education |
+| `person_counted` | A person entered a defined zone | retail, metro, manufacturing, education, health |
 | `vehicle_counted` | A vehicle entered a defined zone | metro |
-| `object_classified` | A crop was classified (e.g. `ppe worn`, `no ppe`, a product) | retail, manufacturing |
-| `object_picked_up` | A tracked object left a shelf | retail |
+| `object_classified` | A crop was classified (`ppe worn`, a product, a vehicle class) | retail, manufacturing, metro |
+| `object_picked_up` | A tracked product left a shelf | retail |
 | `plate_detected` | A licence plate was read | federal |
 | `posture_alert` | A fall or unsafe posture was detected | education, health |
 
-Manufacturing on the demo machine shows **54–55 events** in the rolling window —
-mostly `person_counted` plus PPE classifications.
+### Real examples
+
+Ten actual events, captured from live runs on the demo machine and rendered
+exactly as the overlay draws them. Use these rather than inventing phrasing —
+the wording is specific and a customer will hear the difference.
+
+```
+metro          "person_counted · person 98% · crosswalk"
+metro          "vehicle_counted · vehicle 100% · incoming_lane"
+metro          "object_classified · car 42% · incoming_lane"
+
+manufacturing  "person_counted · person 93% · work_cell"
+manufacturing  "object_classified · ppe_worn 32% · work_cell"
+
+retail         "object_classified · bag of chips 41% · basket"
+
+education      "person_counted · person 100% · campus_west"
+education      "posture_alert · person 100% · monitoring_zone"
+
+health         "person_counted · person 44% · entry_side"
+
+federal        "plate_detected · license plate 34% · perimeter"
+```
+
+The grammar is always `type · label · confidence · zone`.
+
+### What the events do NOT say
+
+Worth knowing before someone asks, because the natural assumption is wrong:
+
+- **No identities.** The label is a detector class — `person`, `vehicle`, `car`,
+  `license plate` — never a named individual. There is no "person picked up
+  apple".
+- **Actions attach to objects, not people.** The code deliberately excludes
+  people from pick-up events: `"object_picked_up person" is not a statement worth
+  making`. A shopper walking out of a shelf zone is not a product being taken.
+
+### One type we have not seen fire
+
+`object_picked_up` is implemented and gated, but **no run has ever produced one** —
+retail generated 65 events across a 70-second run and every one was
+`object_classified`. The dwell and shelf-zone conditions are not being met by this
+footage.
+
+Do not demo a pick-up event unless you have watched one appear. If a customer
+asks, the honest answer is *"that's implemented and gated, but this clip doesn't
+trigger it."*
+
+### Measured example
+
+Metro at density 1 produced **360 events in 45 seconds** — 251 `person_counted`,
+82 `vehicle_counted`, 27 `object_classified`. That is the busiest scenario and the
+best one for showing EVENTS move.
 
 ### The line to use
 
