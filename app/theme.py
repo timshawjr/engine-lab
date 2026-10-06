@@ -114,6 +114,10 @@ class Theme:
     rag_passage_excerpt_chars: int = 5000
     # Scrollbar width inside the passage panel. Wide enough to grab at a booth.
     rag_scrollbar_width: int = 14
+
+    # Delay before the one-time stream re-alignment at startup. The stream
+    # workers only exist after model compilation, so this must outlast it.
+    startup_resync_ms: int = 6000
     rag_input_height: int = 52
     rag_answer_max_chars: int = 1200
     # The document title is long enough to wrap three lines in the header and

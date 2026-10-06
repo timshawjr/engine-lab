@@ -552,6 +552,13 @@ class _ProcessingRate:
 
 
 class ScenarioStreamWorker(QThread):
+    #: Drift, in frames, below which a requested resync is not worth the jump.
+    #: A seek discards the frames the tracker is following, so it must only
+    #: happen when the alternative -- boxes describing an earlier moment -- is
+    #: clearly worse. Three frames at 24 fps is 125 ms, about the threshold of
+    #: noticeable misalignment.
+    RESYNC_MINIMUM_DRIFT_FRAMES = 3
+
     frame_ready = Signal(int, object)
     placement_ready = Signal(int, object, int, float)
     failed = Signal(int, str)
@@ -592,6 +599,17 @@ class ScenarioStreamWorker(QThread):
         self._event_tracker = self._event_trackers[scenario.id]
         self._latest_placements: dict[str, RunnerInfo] = {}
         self._fallbacks: list[str] = []
+        #: Where the display clock is, published every clock frame. Storing this
+        #: never seeks; see request_resync().
+        self._reference_frame = -1
+        #: Armed by request_resync() on a device change, consumed once by the
+        #: frame loop. Deliberately one-shot: a seek discards tracked frames, so
+        #: doing it per frame broke tracking and produced phantom boxes.
+        self._resync_requested = False
+        #: Frames seeked over, for diagnostics.
+        self.resynced_frames = 0
+        #: Last observed capture position, for diagnostics.
+        self.last_position = -1
         # stage -> device string that failed to compile for that stage. Used so a known-failing
         # device is not retried on every frame, while a policy change to a different device
         # string clears the match and retries.
@@ -1107,6 +1125,25 @@ class ScenarioStreamWorker(QThread):
         frame_index_cache.setdefault(scenario.id, 0)
         return active_runners, capture, loop, source_fps
 
+    def set_reference_frame(self, frame_index: int) -> None:
+        """Store the display clock's current FILE POSITION.
+
+        Called from the UI thread for every clock frame. This only records a
+        number and never seeks: arming a seek here would make it fire on every
+        frame, which is what broke tracking in the first attempt.
+        """
+        self._reference_frame = int(frame_index)
+
+    def request_resync(self) -> None:
+        """Ask this worker to rejoin the display clock once, on its next frame.
+
+        Called on every device change. The drift this corrects accumulates
+        *during* the CPU-fallback stretch, so arming only when devices go off
+        would seek before there is anything to correct -- it has to be armed when
+        they come back on as well.
+        """
+        self._resync_requested = True
+
     def run(self) -> None:
         capture_cache: dict[
             str,
@@ -1169,6 +1206,25 @@ class ScenarioStreamWorker(QThread):
                     next_deadline = time.perf_counter()
 
                 end_to_end_started = time.perf_counter()
+                # Record where this capture is, for diagnostics and for the
+                # resync below. One property read per frame.
+                try:
+                    self.last_position = int(capture.get(cv2.CAP_PROP_POS_FRAMES))
+                except Exception:  # noqa: BLE001 - backend-dependent
+                    self.last_position = -1
+                # Rejoin the display clock, but only when a device change asked
+                # us to. One seek per device change. Only ever seek FORWARD: a
+                # negative drift means the clock has wrapped past us (the clip
+                # loops), which needs no correction, and seeking backwards would
+                # replay content.
+                if self._resync_requested:
+                    self._resync_requested = False
+                    if self._reference_frame >= 0 and self.last_position >= 0:
+                        drift = self._reference_frame - self.last_position
+                        if drift > self.RESYNC_MINIMUM_DRIFT_FRAMES:
+                            capture.set(cv2.CAP_PROP_POS_FRAMES, self._reference_frame)
+                            self.resynced_frames += drift
+                            self.last_position = self._reference_frame
                 decode_started = time.perf_counter()
                 ok, frame = capture.read()
                 decode_ms = (time.perf_counter() - decode_started) * 1000.0

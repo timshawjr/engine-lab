@@ -2016,6 +2016,13 @@ class MainWindow(QMainWindow):
             {"scenario": self.scenario.id, "at": time.time(), "reason": "startup"}
         )
         self._start_all_scenario_pools()
+        # The workers open their captures after compiling their models, so they
+        # begin well after the video clock and sit a fixed offset behind it.
+        # Measured on metro: a steady 21-24 frames, about 0.9 s at 24 fps, which
+        # reads as boxes that do not match the picture. One resync once the
+        # streams are running removes that offset; it is armed late enough that
+        # compilation is finished and the captures have a real position.
+        QTimer.singleShot(THEME.startup_resync_ms, self._request_stream_resync)
 
     def _update_runtime_gops_label(self) -> None:
         values: dict[str, float] = {}
@@ -2216,8 +2223,24 @@ class MainWindow(QMainWindow):
                 time.monotonic(),
                 initial=False,
             )
+            # A device change is the only moment the two captures drift apart,
+            # so ask each worker to rejoin the clock. Armed on BOTH directions:
+            # the drift builds up during the slow stretch, so the correction is
+            # needed when the devices come back, not when they go off.
+            self._request_stream_resync()
         else:
             self._update_policy_header()
+
+    def _request_stream_resync(self) -> None:
+        """Ask every stream worker to re-align with the display clock once.
+
+        One-shot by design. A seek discards the frames the event tracker is
+        following, so seeking continuously (the first attempt at this fix)
+        broke tracks and produced phantom boxes on metro, which carries about
+        22 detections per frame.
+        """
+        for worker in self.stream_workers.values():
+            worker.request_resync()
 
     def toggle_npu(self) -> None:
         before = self.policy.snapshot().sequence
@@ -2322,6 +2345,13 @@ class MainWindow(QMainWindow):
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:
         self.latest_image = image
         self.latest_image_size = (image.width(), image.height())
+        # Publish the clock's FILE POSITION so a worker can rejoin it when asked.
+        # Not frame_index: that is a cumulative counter that climbs past the file
+        # length because the clips loop, so seeking to it lands past the end.
+        # Storing this never seeks -- only a device change arms a seek.
+        reference = getattr(self.video_clock, "last_position", -1)
+        for worker in self.stream_workers.values():
+            worker.set_reference_frame(reference)
         detections = self.stream_detections.get(0, ())
         self.main_canvas.set_frame(
             image,
