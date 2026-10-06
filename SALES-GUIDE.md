@@ -12,7 +12,7 @@ reproducible with `verify-booth.bat`.
 
 ## The one-line pitch
 
-> Everything you are about to see runs on this laptop — detection, classification,
+> Everything you are about to see runs on this NUC — detection, classification,
 > counting and document question answering. Nothing leaves the machine, and it
 > works with the network unplugged.
 
@@ -295,7 +295,7 @@ the problem is found at the venue rather than in front of a customer.
 
 ## The 30-second version
 
-> One laptop, one SoC. Six live video scenarios — detection on the NPU,
+> One NUC, one SoC. Six live video scenarios - detection on the NPU,
 > classification on the GPU, counting on the CPU, all visible on screen — plus
 > document question answering over a 321-page federal guide, also local. Ask it
 > something and it shows you the page it read. Unplug the network if you like.

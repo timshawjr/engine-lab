@@ -422,7 +422,7 @@ results, and the RSS timeline. The benchmark tool consumes these files rather th
 ## Pre-show checklist
 
 1. Connect AC power and use the Best performance power plan; disable sleep/hibernate timeouts on AC.
-2. Keep the lid open or support the laptop so the platform cannot throttle or sleep.
+2. Give the NUC clear ventilation and keep it out of any closed cabinet, so the platform cannot throttle or sleep.
 3. Connect the external display at 1920×1080 or higher and set the display scale so the 18 px minimum UI text is legible from two metres.
 4. Run the full preflight after the final reboot and confirm 0 FAIL.
 5. Run the network-blocked self-test and the unit tests.

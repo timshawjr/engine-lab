@@ -150,7 +150,7 @@ Keyboard:
     the video, the document - is inside the folder.
 
 "Is this really running on the machine, not in the cloud?"
-    Yes. One laptop, one chip. Press F1 to see which engine each model used.
+    Yes. One NUC, one chip. Press F1 to see which engine each model used.
 
 "Does the Q&A know everything?"
     No. It only answers from the NIST OT security guide that is bundled with
