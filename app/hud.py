@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 import psutil
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -133,6 +133,20 @@ def _label(
     label.setStyleSheet(f"color: {color}; background: transparent;")
     label.setWordWrap(True)
     return label
+
+
+def rag_key_closes_panel(
+    key: int, modifiers: "Qt.KeyboardModifier", typed_text: str
+) -> bool:
+    """Whether a keypress in the question box should put the Q&A panel away.
+
+    Only Escape. The box takes focus when the panel opens, so keypresses never
+    reach ``MainWindow.keyPressEvent`` and Escape needs handling here -- but no
+    printable key may close the panel, because every letter is legitimate in a
+    question. An earlier attempt let R close while the box was empty, which made
+    "Risk assessment" impossible to type: the leading "r" dismissed the panel.
+    """
+    return key == Qt.Key.Key_Escape
 
 
 def _panel() -> QFrame:
@@ -1404,6 +1418,15 @@ class MainWindow(QMainWindow):
         self.rag_ask_button.setFixedHeight(THEME.rag_input_height)
         self.rag_ask_button.clicked.connect(self._ask_rag)
         ask_row.addWidget(self.rag_ask_button)
+        # Answers may be read while typing the next question, and the panel must be
+        # dismissable without reaching for a keyboard shortcut the box eats.
+        self.rag_close_button = QPushButton("Close")
+        self.rag_close_button.setFixedHeight(THEME.rag_input_height)
+        self.rag_close_button.clicked.connect(self._close_rag_panel)
+        ask_row.addWidget(self.rag_close_button)
+
+        self.rag_input.installEventFilter(self)
+
         root.addLayout(ask_row)
 
         columns = QVBoxLayout()
@@ -1497,7 +1520,7 @@ class MainWindow(QMainWindow):
         root.addLayout(columns, 1)
 
         self.rag_status = _label(
-            "Ask a question — the pipeline keeps running beside this panel.",
+            "Ask a question. Esc or Close puts this panel away — the pipeline keeps running.",
             size=THEME.rag_source_font,
             color=THEME.text_muted,
         )
@@ -1573,6 +1596,31 @@ class MainWindow(QMainWindow):
         self.rag_panel_host.setVisible(False)
         self.stack.setCurrentIndex(index)
         self.current_page = name
+
+    def eventFilter(self, watched: object, event: object) -> bool:
+        """Let Escape and an empty-box R close the panel while the box has focus.
+
+        Without this the question box swallows every keypress, so R could open
+        the panel but never close it again.
+        """
+        if watched is self.rag_input and event.type() == QEvent.Type.KeyPress:
+            if rag_key_closes_panel(
+                event.key(), event.modifiers(), self.rag_input.text()
+            ):
+                self._close_rag_panel()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _close_rag_panel(self) -> None:
+        """Put the Q&A panel away and give the keyboard back to the demo.
+
+        Focus returns to the window so the scenario keys (1-6), N/G/C and R all
+        keep working -- otherwise focus would stay on a hidden text box.
+        """
+        self.rag_panel_host.setVisible(False)
+        self.rag_panel_visible = False
+        self.rag_input.clear()
+        self.setFocus()
 
     def toggle_rag_panel(self) -> None:
         """Show or hide the Q&A panel without disturbing the running pipeline."""
