@@ -2322,6 +2322,14 @@ class MainWindow(QMainWindow):
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:
         self.latest_image = image
         self.latest_image_size = (image.width(), image.height())
+        # Publish the clock's file position as the sync reference. The overlay
+        # draws this frame, so a worker's detections must describe this frame and
+        # not an earlier one; each worker seeks to it if it has fallen too far
+        # back. Use last_position rather than frame_index: the counter climbs
+        # past the file length because the clip loops.
+        reference = getattr(self.video_clock, "last_position", -1)
+        for worker in self.stream_workers.values():
+            worker.set_reference_frame(reference)
         detections = self.stream_detections.get(0, ())
         self.main_canvas.set_frame(
             image,

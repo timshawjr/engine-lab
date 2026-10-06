@@ -1,4 +1,4 @@
-"""Phase 3 scenario graphs, model registry, and multi-stage stream workers."""
+﻿"""Phase 3 scenario graphs, model registry, and multi-stage stream workers."""
 
 from __future__ import annotations
 
@@ -552,6 +552,18 @@ class _ProcessingRate:
 
 
 class ScenarioStreamWorker(QThread):
+    #: How far this worker may fall behind the wall clock before it starts
+    #: dropping frames. The display clock and this worker read the same file
+    #: through separate captures, so they stay aligned only while inference keeps
+    #: up with real time. Three frames at 24 fps is 125 ms: enough to absorb
+    #: ordinary jitter without dropping steadily.
+    CATCH_UP_THRESHOLD_FRAMES = 3.0
+
+    #: How far this worker may trail the display clock before it seeks forward to
+    #: rejoin it. Rate-matching alone does not close an accumulated offset, which
+    #: is why a device toggle left the boxes describing an earlier moment.
+    RESYNC_THRESHOLD_FRAMES = 6
+
     frame_ready = Signal(int, object)
     placement_ready = Signal(int, object, int, float)
     failed = Signal(int, str)
@@ -592,6 +604,23 @@ class ScenarioStreamWorker(QThread):
         self._event_tracker = self._event_trackers[scenario.id]
         self._latest_placements: dict[str, RunnerInfo] = {}
         self._fallbacks: list[str] = []
+        # Wall-clock anchor for keeping this capture level with the display
+        # clock; see the catch-up block in the frame loop. Initialised here so
+        # a worker that has not started yet still reports sane values.
+        self._sync_started = time.perf_counter()
+        self._sync_frames = 0
+        #: Frames skipped because this worker had fallen behind real time.
+        self.dropped_frames = 0
+        #: The display clock's most recent frame index. The clock is the
+        #: reference the picture is drawn from, so this worker seeks to it when
+        #: it has fallen too far behind. Updated from the UI thread; an int
+        #: assignment is atomic enough for a display reference that is
+        #: re-published every frame.
+        self._reference_frame = -1
+        #: Frames seeked over to rejoin the display clock.
+        self.resynced_frames = 0
+        #: Last observed capture position, for diagnostics.
+        self.last_position = -1
         # stage -> device string that failed to compile for that stage. Used so a known-failing
         # device is not retried on every frame, while a policy change to a different device
         # string clears the match and retries.
@@ -1107,6 +1136,17 @@ class ScenarioStreamWorker(QThread):
         frame_index_cache.setdefault(scenario.id, 0)
         return active_runners, capture, loop, source_fps
 
+    def set_reference_frame(self, frame_index: int) -> None:
+        """Publish the display clock's current frame as the sync reference.
+
+        Called from the UI thread for every clock frame. The overlay draws that
+        frame, so detections must describe it; the worker seeks to it from its
+        own thread when it has fallen too far behind. A plain int assignment is
+        sufficient -- the value is republished on the next frame regardless, so a
+        torn read costs nothing.
+        """
+        self._reference_frame = int(frame_index)
+
     def run(self) -> None:
         capture_cache: dict[
             str,
@@ -1136,6 +1176,9 @@ class ScenarioStreamWorker(QThread):
                 (time.monotonic() - self._requested_at) * 1000.0,
             )
             next_deadline = time.perf_counter()
+            # Level the wall-clock anchor with the freshly opened capture.
+            self._sync_started = time.perf_counter()
+            self._sync_frames = 0
             while not self.isInterruptionRequested():
                 while True:
                     try:
@@ -1167,10 +1210,51 @@ class ScenarioStreamWorker(QThread):
                         (time.monotonic() - requested_at) * 1000.0,
                     )
                     next_deadline = time.perf_counter()
+                    # Switching scenario reopens the capture; the anchor must
+                    # move with it or the first frame after the switch looks
+                    # wildly behind and triggers a spurious catch-up.
+                    self._sync_started = time.perf_counter()
+                    self._sync_frames = 0
 
                 end_to_end_started = time.perf_counter()
+                # The display clock and this worker read the same file through
+                # separate captures, so they stay aligned only while inference
+                # keeps up with real time. Toggling the NPU and GPU off drops
+                # everything to CPU, inference falls behind, and this capture
+                # lags -- and it never recovers on its own, because the pacing at
+                # the end of this loop resyncs the clock while the capture keeps
+                # handing back stale sequential frames. The symptom a viewer sees
+                # is boxes drawn on items that have already left the screen.
+                # Dropping the frames we have fallen behind by re-levels the two.
+                if source_fps is not None:
+                    behind = (
+                        (time.perf_counter() - self._sync_started) * source_fps
+                        - self._sync_frames
+                    )
+                    if behind > self.CATCH_UP_THRESHOLD_FRAMES:
+                        dropped = 0
+                        while dropped < int(behind) and capture.grab():
+                            dropped += 1
+                            self._sync_frames += 1
+                        self.dropped_frames += dropped
+                    # Rate-matching keeps this worker level with the clock, but it
+                    # cannot close an offset already accumulated -- which is what
+                    # a device toggle leaves behind. Seek forward to rejoin the
+                    # frame the viewer is actually looking at.
+                    if self._reference_frame >= 0:
+                        try:
+                            position = int(capture.get(cv2.CAP_PROP_POS_FRAMES))
+                        except Exception:  # noqa: BLE001 - backend-dependent
+                            position = -1
+                        self.last_position = position
+                        gap = self._reference_frame - position
+                        if position >= 0 and gap > self.RESYNC_THRESHOLD_FRAMES:
+                            capture.set(cv2.CAP_PROP_POS_FRAMES, self._reference_frame)
+                            self.resynced_frames += gap
+                            self._sync_frames += gap
                 decode_started = time.perf_counter()
                 ok, frame = capture.read()
+                self._sync_frames += 1
                 decode_ms = (time.perf_counter() - decode_started) * 1000.0
                 if not ok or frame is None:
                     if loop:
@@ -1313,3 +1397,5 @@ class ScenarioStreamWorker(QThread):
             for capture, _, _ in capture_cache.values():
                 capture.release()
             runner_cache.clear()
+
+
