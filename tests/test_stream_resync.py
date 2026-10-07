@@ -128,6 +128,27 @@ class TriggerWiringTests(unittest.TestCase):
         source = Path("app/hud.py").read_text(encoding="utf-8")
         self.assertIn("THEME.startup_resync_ms, self._request_stream_resync", source)
 
+    def test_alignment_is_rechecked_periodically(self) -> None:
+        # The worker consumes frames marginally slower than real time, so on a
+        # long run the offset grows without bound: measured about 18 frames a
+        # minute, which is three seconds of misalignment after four minutes and
+        # was reported from a booth. A one-shot correction cannot catch that.
+        source = Path("app/hud.py").read_text(encoding="utf-8")
+        self.assertIn("resync_timer", source)
+        self.assertIn("THEME.resync_interval_ms", source)
+
+    def test_the_periodic_check_is_a_check_not_a_seek(self) -> None:
+        # It must ask; the worker decides. Seeking on every tick would be the
+        # per-frame seeking that broke tracking on the first attempt.
+        from app.theme import THEME
+
+        source = Path("app/engine/pipelines.py").read_text(encoding="utf-8")
+        marker = "if self._resync_requested:"
+        body = source[source.index(marker) : source.index(marker) + 900]
+        self.assertIn("RESYNC_MINIMUM_DRIFT_FRAMES", body)
+        # And the interval must be long enough that a seek is rare.
+        self.assertGreaterEqual(THEME.resync_interval_ms, 5000)
+
     def test_the_seek_is_not_armed_from_the_frame_loop(self) -> None:
         source = Path("app/engine/pipelines.py").read_text(encoding="utf-8")
         marker = "if self._resync_requested:"

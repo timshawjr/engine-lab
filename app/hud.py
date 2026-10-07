@@ -2023,6 +2023,15 @@ class MainWindow(QMainWindow):
         # streams are running removes that offset; it is armed late enough that
         # compilation is finished and the captures have a real position.
         QTimer.singleShot(THEME.startup_resync_ms, self._request_stream_resync)
+        # Keep it aligned afterwards. The worker consumes frames marginally
+        # slower than real time, so the offset grows without bound on a long run:
+        # measured drift is about 18 frames a minute, which is three seconds of
+        # misalignment after four minutes. The timer only asks; the worker seeks
+        # only when the drift is actually worth a jump.
+        self.resync_timer = QTimer(self)
+        self.resync_timer.setInterval(THEME.resync_interval_ms)
+        self.resync_timer.timeout.connect(self._request_stream_resync)
+        self.resync_timer.start()
 
     def _update_runtime_gops_label(self) -> None:
         values: dict[str, float] = {}
@@ -2232,12 +2241,13 @@ class MainWindow(QMainWindow):
             self._update_policy_header()
 
     def _request_stream_resync(self) -> None:
-        """Ask every stream worker to re-align with the display clock once.
+        """Ask every stream worker to re-align with the display clock.
 
-        One-shot by design. A seek discards the frames the event tracker is
-        following, so seeking continuously (the first attempt at this fix)
-        broke tracks and produced phantom boxes on metro, which carries about
-        22 detections per frame.
+        Asks; the worker decides. It seeks only when the drift exceeds its
+        minimum, so calling this periodically costs nothing while the two are
+        already together. Seeking on EVERY frame (the first attempt at this fix)
+        broke tracking because it discarded the frames the tracker was following;
+        this runs at most once per interval instead.
         """
         for worker in self.stream_workers.values():
             worker.request_resync()

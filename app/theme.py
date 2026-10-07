@@ -118,6 +118,12 @@ class Theme:
     # Delay before the one-time stream re-alignment at startup. The stream
     # workers only exist after model compilation, so this must outlast it.
     startup_resync_ms: int = 6000
+    # How often to re-check alignment. The stream worker consumes frames very
+    # slightly slower than real time -- measured drift is about 18 frames per
+    # minute, so a run of a few minutes visibly desynchronises. The worker only
+    # actually seeks when the drift exceeds its minimum, so this is a check, not
+    # a guaranteed seek; measured cost is one rejoin every 30 s or so.
+    resync_interval_ms: int = 12000
     rag_input_height: int = 52
     rag_answer_max_chars: int = 1200
     # The document title is long enough to wrap three lines in the header and
