@@ -1,6 +1,6 @@
 {
-  "probed_on": "2026-09-24T03:50:33.551677+00:00",
-  "windows_build": "10.0.26200.7840",
+  "probed_on": "2026-10-07T03:06:13.190894+00:00",
+  "windows_build": "10.0.26200.9457",
   "driver_versions": {
     "npu": "32.0.100.5540",
     "gpu": "32.0.101.6737"
@@ -14,121 +14,121 @@
   "counter_source": "pdh_gpu_engine",
   "instances": [
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_0_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x000112A0_phys_0_eng_0_engtype_Neural",
+      "device": "NPU",
+      "engtype": "Neural"
+    },
+    {
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_0_engtype_3D",
       "device": "GPU",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_10_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_10_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_11_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_11_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_12_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_12_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_1_engtype_VideoDecode",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_1_engtype_VideoDecode",
       "device": "GPU",
       "engtype": "VideoDecode"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_2_engtype_Copy",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_2_engtype_Copy",
       "device": "GPU",
       "engtype": "Copy"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_3_engtype_VideoProcessing",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_3_engtype_VideoProcessing",
       "device": "GPU",
       "engtype": "VideoProcessing"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_4_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_4_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_5_engtype_Compute",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_5_engtype_Compute",
       "device": "GPU",
       "engtype": "Compute"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_6_engtype_GSC",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_6_engtype_GSC",
       "device": "GPU",
       "engtype": "GSC"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_7_engtype_Copy",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_7_engtype_Copy",
       "device": "GPU",
       "engtype": "Copy"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_8_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_8_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000124A5_phys_0_eng_9_engtype_",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00010E9E_phys_0_eng_9_engtype_",
       "device": "GPU",
       "engtype": null
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_0_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_0_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_1_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_1_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_2_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_2_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_3_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_3_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_4_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_4_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_5_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_5_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_6_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_6_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_7_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_7_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
     },
     {
-      "pattern": "pid_<pid>_luid_0x00000000_0x00012838_phys_0_eng_8_engtype_3D",
+      "pattern": "pid_<pid>_luid_0x00000000_0x00011232_phys_0_eng_8_engtype_3D",
       "device": "UNKNOWN",
       "engtype": "3D"
-    },
-    {
-      "pattern": "pid_<pid>_luid_0x00000000_0x000128A6_phys_0_eng_0_engtype_Neural",
-      "device": "NPU",
-      "engtype": "Neural"
     }
   ],
   "fallback": "npu_duty_cycle",
-  "notes": "SetupAPI reports overlapping physical ids for the NPU and GPU; LUID is used as the unambiguous tie-breaker. 1 enumerated instance name(s) could not be parsed safely; they remain in the raw probe log and were omitted from the generated map. NPU PDH instances were observed using SetupAPI LUID; physical id was used only after checking for an NPU/GPU id collision."
+  "notes": "SetupAPI reports overlapping physical ids for the NPU and GPU; LUID is used as the unambiguous tie-breaker. NPU PDH instances were observed using SetupAPI LUID; physical id was used only after checking for an NPU/GPU id collision."
 }
