@@ -1889,7 +1889,7 @@ class MainWindow(QMainWindow):
         gauge_panel = QFrame()
         gauge_layout = QVBoxLayout(gauge_panel)
         gauge_layout.setContentsMargins(0, 0, 0, 0)
-        gauge_layout.setSpacing(THEME.spacing_sm)
+        gauge_layout.setSpacing(THEME.gauge_tile_spacing)
         self.gauges: dict[str, EngineGauge] = {}
         for engine in ("NPU", "GPU", "CPU"):
             gauge = EngineGauge(engine, compact=self.compact_layout)

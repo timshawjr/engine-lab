@@ -59,6 +59,13 @@ class Theme:
     gauge_value_font_compact_min: int = 10
     gauge_value_area_min: int = 20
     gauge_bar_min: int = 8
+    # Gap between the three engine tiles. Deliberately tighter than the general
+    # panel spacing: measured at 1920x1080, three tiles need 139 px each by
+    # content (header + value + bar + gap) and the column offers about 429 px.
+    # At spacing_sm (10) that leaves 137 px per tile and clips the bar off the
+    # bottom tile -- the CPU readout lost its bar and sparkline entirely. Six
+    # gives 139 px each, which fits.
+    gauge_tile_spacing: int = 4
     gauge_gap_min: int = 4
     gauge_value_line_ratio: float = 1.77
     # Row height for on-video overlay text (detection descriptors, zone names,
