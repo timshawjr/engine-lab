@@ -68,7 +68,16 @@ class Theme:
     overlay_badge_width: int = 300
     # Header stat strip. Three small measured readouts replace the LIVE badge and
     # the clock: FPS, DET/s and EVENTS. Caption above, value below.
+    # Fixed-width template for a stat value. These readouts update several times
+    # a second, so if the box is sized to its text then "9" and "888.8" occupy
+    # different widths and the whole header strip reflows on every change --
+    # measured, a neighbouring stat slid 63 px and the title panel varied
+    # through 24 distinct widths. Sizing the label from this template keeps the
+    # strip still, and it is wide enough for the largest value any scenario
+    # produces (metro's DET/s peaks around 888.6).
     header_stat_caption_font: int = 12
+    header_stat_value_template: str = "8888.8"
+
     header_stat_value_font: int = 26
     overlay_border: int = 3
     minimum_window_width: int = 1280

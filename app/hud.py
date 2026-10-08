@@ -922,10 +922,17 @@ class HeaderStat(QFrame):
         )
         layout.addWidget(caption_label)
         self.value = _label(
-            "—",
+            "-",
             size=THEME.header_stat_value_font,
             color=THEME.text,
             bold=True,
+        )
+        # Fixed width so the strip cannot reflow as the digits change. Without
+        # this the box is sized to its text, so a value going from "9" to "241"
+        # widens it and shoves everything beside it, several times a second.
+        value_metrics = QFontMetrics(self.value.font())
+        self.value.setFixedWidth(
+            value_metrics.horizontalAdvance(THEME.header_stat_value_template)
         )
         layout.addWidget(self.value)
 
