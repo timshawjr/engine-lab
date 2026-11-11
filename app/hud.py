@@ -1410,8 +1410,14 @@ class MainWindow(QMainWindow):
         per query against 16 ms on the GPU.
         """
         # The Q&A is reparented into the splitter on the demo page: it is a panel
-        # beside the pipeline, not a page that replaces it.
-        self.rag_page.setParent(self.rag_panel_host)
+        # beside the pipeline, not a page that replaces it. It goes in through a
+        # layout, not a bare setParent: without one the page kept its own size
+        # hint instead of being sized to the host, so at 1280x720 it was handed
+        # 774px inside a 720px window and its bottom status line fell off-screen.
+        host_layout = QVBoxLayout(self.rag_panel_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        host_layout.addWidget(self.rag_page)
         root = QVBoxLayout(self.rag_page)
         root.setContentsMargins(
             THEME.spacing_md, THEME.spacing_md, THEME.spacing_md, THEME.spacing_md
