@@ -21,7 +21,12 @@ from app.telemetry.devices_win import (
     is_npu,
 )
 from app.telemetry.npu_fallback import NpuDutyCycle
-from app.telemetry.pdh import GPUEngineCounter, PDHError, classify_device
+from app.telemetry.pdh import (
+    EnergyMeterCounter,
+    GPUEngineCounter,
+    PDHError,
+    classify_device,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,10 @@ class TelemetryFrame:
     cpu_per_core_percent: tuple[float, ...]
     process_rss_bytes: int
     pdh_error: str | None
+    #: SoC package draw in watts, from the platform's energy counters. None when
+    #: this machine does not expose them -- never zero, which would read as a
+    #: measurement that came back as nothing.
+    package_watts: float | None = None
 
     def metric(self, engine: str) -> EngineMetric | None:
         return next((item for item in self.engine_metrics if item.engine == engine), None)
@@ -125,9 +134,24 @@ class TelemetrySampler(QObject):
                 npu_pdh_configured = False
 
         process = psutil.Process(os.getpid())
+        # The platform energy meter is independent of the GPU engine counters:
+        # a machine can have one, both or neither. Failure to open it must not
+        # take down the telemetry the demo already shows.
+        energy_counter: EnergyMeterCounter | None = None
+        try:
+            energy_counter = EnergyMeterCounter()
+        except Exception:
+            energy_counter = None
+
         next_sample = time.monotonic()
         while not self._stop_event.is_set():
             try:
+                package_watts: float | None = None
+                if energy_counter is not None:
+                    try:
+                        package_watts = energy_counter.sample_package_watts()
+                    except Exception:
+                        package_watts = None
                 if pdh_counter is not None:
                     samples = pdh_counter.sample_utilization()
                 else:
@@ -227,6 +251,7 @@ class TelemetrySampler(QObject):
                     cpu_per_core_percent=cpu_reading.per_core_percent,
                     process_rss_bytes=int(process.memory_info().rss),
                     pdh_error=pdh_error,
+                    package_watts=package_watts,
                 )
                 self.frame_ready.emit(frame)
             except Exception as exc:
@@ -248,6 +273,7 @@ class TelemetrySampler(QObject):
                     cpu_per_core_percent=(),
                     process_rss_bytes=0,
                     pdh_error=pdh_error,
+                    package_watts=None,
                 )
                 self.frame_ready.emit(fallback_frame)
 
@@ -260,5 +286,10 @@ class TelemetrySampler(QObject):
         if pdh_counter is not None:
             try:
                 pdh_counter.close()
+            except PDHError:
+                pass
+        if energy_counter is not None:
+            try:
+                energy_counter.close()
             except PDHError:
                 pass

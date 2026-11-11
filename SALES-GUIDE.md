@@ -58,9 +58,9 @@ wheels are built for it.
 
 ---
 
-## Reading the three header numbers
+## Reading the four header numbers
 
-Under the scenario title are three live readouts. They answer three different
+Under the scenario title are four live readouts. They answer four different
 questions, in order, and that order is the pitch:
 
 | Readout | Question it answers | What it actually counts |
@@ -68,6 +68,31 @@ questions, in order, and that order is the pitch:
 | **FPS** | Is it *live*? | Frames per second the pipeline is processing |
 | **DET/s** | Is it doing *real work*? | Detection boxes per second, summed across all active streams |
 | **EVENTS** | Does it produce a *business answer*? | Tracked business events in a rolling 60-second window |
+| **CHIP POWER** | What does that *cost to run*? | Mean processor package power over the last second, in watts |
+
+### Why CHIP POWER matters
+
+It is the chipteeth answer to "what does this cost?" — measured, not estimated.
+The processor reports its own energy use through Windows, and the tile shows the
+mean of the last second rounded to whole watts.
+
+Measured on the booth NUC:
+
+| State | CHIP POWER |
+|---|---|
+| Sitting idle before launch | **about 4 W** |
+| Running the demo (manufacturing, density 1) | **about 20 W** |
+
+The line that lands: *"Six AI pipelines, on one chip, for about the price of a
+20 W light bulb."* That is a like-for-like comparison — 20 W is 20 W.
+
+**It is the processor package, not the wall.** It excludes the display, the SSD,
+the fans and the power supply's losses, so draw at the socket is meaningfully
+higher. The tile's tooltip says so, and so must you if anyone asks "is that the
+whole machine?" — answer: *"No, that's the chip. The wall is higher."*
+
+The counter is not universal: on a machine that does not expose it, the tile
+shows a dash. That is the honest state, not a zero.
 
 ### Why DET/s matters
 
@@ -309,6 +334,8 @@ the right.
   shows the pages it used.
 - Detection holds ~24 FPS and ~200–260 DET/s on the development machine.
 - NPU 21–25%, GPU 34–57%, CPU 82–90% at density 2.
+- The chip draws **about 20 W** running the demo, against **about 4 W** idle, measured
+  by the processor's own energy counters. Say "processor package" if pressed.
 
 **Must say "on this machine"** with every performance number. Graphics and CPU
 numbers are only true for the hardware and drivers they were measured on.
@@ -325,6 +352,11 @@ numbers are only true for the hardware and drivers they were measured on.
 - *"It knows everything."* It answers only from NIST SP 800-82r4 and declines
   otherwise.
 - *"The package is signed."* It is not. Windows will warn on first run.
+- *"CHIP POWER is the system's power."* It is the processor package. The display,
+  storage, fans and PSU losses are outside it, so wall draw is higher. Never call
+  it "total system watts" or "wall power".
+- Any comparison of this wattage against a competitor's GPU. We have not measured
+  one, and the two numbers meter different things.
 - Any number you have not seen on that machine today.
 
 **Must not do:**

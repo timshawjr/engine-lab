@@ -79,6 +79,7 @@ from app.telemetry.devices_win import (
     is_intel,
     is_npu,
 )
+from app.telemetry.energy import PowerDisplay
 from app.telemetry.npu_fallback import NpuDutyCycle
 from app.telemetry.sampler import EngineMetric, TelemetryFrame, TelemetrySampler
 from app.theme import THEME
@@ -1321,6 +1322,11 @@ class MainWindow(QMainWindow):
         self.telemetry_history: deque[TelemetryFrame] = deque(maxlen=5000)
         self.rss_timeline: deque[dict[str, float]] = deque(maxlen=200)
         self.events: deque[BusinessEvent] = deque(maxlen=1000)
+        # Steadies the platform energy reading before it reaches the tile: the
+        # raw counter moves many times a second and would flicker.
+        self.power_display = PowerDisplay(
+            publish_interval_s=THEME.energy_publish_interval_s,
+        )
         self.latest_telemetry: TelemetryFrame | None = None
         self.latest_image: QImage | None = None
         self.latest_image_size = (0, 0)
@@ -1892,7 +1898,24 @@ class MainWindow(QMainWindow):
             f"{float(self.scenario.event_rules['event_window_s']):g}-second window, "
             "counted on the CPU from tracked detections",
         )
-        for stat in (self.fps_stat, self.detection_stat, self.event_stat):
+        # The fourth stat answers "what does this cost to run?". It is measured,
+        # not estimated: Windows exposes the platform's energy counters through
+        # the Energy Metering Interface, which on this hardware are Intel RAPL
+        # domains. The tooltip states what the number excludes, because "watts"
+        # alone invites the reader to assume wall power.
+        self.power_stat = HeaderStat(
+            "CHIP POWER",
+            "Processor package power, measured by the platform's own energy "
+            "counters (Intel RAPL, read through Windows Energy Meter). Excludes "
+            "the display, storage and power-supply losses, so draw at the wall "
+            "is higher. Shows a dash on machines that do not expose the counter.",
+        )
+        for stat in (
+            self.fps_stat,
+            self.detection_stat,
+            self.event_stat,
+            self.power_stat,
+        ):
             status_row.addWidget(stat, 1)
         self.fallback_label = _label("FALLBACK", color=THEME.danger, bold=True)
         self.fallback_label.hide()
@@ -2566,6 +2589,10 @@ class MainWindow(QMainWindow):
     def _on_telemetry(self, frame: TelemetryFrame) -> None:
         self.latest_telemetry = frame
         self.telemetry_history.append(frame)
+        if self.power_display.update(frame.package_watts, time.monotonic()):
+            watts = self.power_display.value
+            # A dash, never a zero: a zero would claim the chip drew nothing.
+            self.power_stat.set_value("—" if watts is None else f"{watts} W")
         for metric in frame.engine_metrics:
             self.gauges[metric.engine].update_metric(metric, frame.sampled_at)
         self.rss_tile.set_value(

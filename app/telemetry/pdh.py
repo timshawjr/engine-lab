@@ -319,31 +319,99 @@ def classify_device(
     return "UNKNOWN"
 
 
+def _open_query() -> tuple[object, wintypes.HANDLE]:
+    dll = _pdh_api()
+    query = wintypes.HANDLE()
+    _require_success(dll.PdhOpenQueryW(None, 0, ctypes.byref(query)), "PdhOpenQueryW")
+    return dll, query
+
+
+def _add_wildcard_counter(
+    dll: object,
+    query: wintypes.HANDLE,
+    object_name: str,
+    counter_name: str,
+) -> wintypes.HANDLE:
+    handle = wintypes.HANDLE()
+    _require_success(
+        dll.PdhAddEnglishCounterW(
+            query,
+            rf"{object_name}(*)\{counter_name}",
+            0,
+            ctypes.byref(handle),
+        ),
+        f"PdhAddEnglishCounterW({counter_name})",
+    )
+    return handle
+
+
+def _collect_query(dll: object, query: wintypes.HANDLE) -> None:
+    _require_success(dll.PdhCollectQueryData(query), "PdhCollectQueryData")
+
+
+def _formatted_counter_samples(
+    dll: object,
+    counter: wintypes.HANDLE,
+    counter_name: str,
+) -> list[CounterSample]:
+    buffer_size = wintypes.DWORD()
+    item_count = wintypes.DWORD()
+    status = dll.PdhGetFormattedCounterArrayW(
+        counter,
+        _PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100,
+        ctypes.byref(buffer_size),
+        ctypes.byref(item_count),
+        None,
+    )
+    _require_success(status, f"PdhGetFormattedCounterArrayW({counter_name})", allow_more_data=True)
+    if not buffer_size.value:
+        return []
+
+    raw_buffer = ctypes.create_string_buffer(buffer_size.value)
+    items = ctypes.cast(raw_buffer, ctypes.POINTER(_PDH_FMT_COUNTERVALUE_ITEM_W))
+    status = dll.PdhGetFormattedCounterArrayW(
+        counter,
+        _PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100,
+        ctypes.byref(buffer_size),
+        ctypes.byref(item_count),
+        ctypes.byref(items[0]),
+    )
+    _require_success(status, f"PdhGetFormattedCounterArrayW({counter_name}) refill")
+    measured_at = time.time()
+    samples: list[CounterSample] = []
+    for index in range(item_count.value):
+        item = items[index]
+        if not item.name or item.formatted_value.status != 0:
+            continue
+        instance = parse_instance(item.name)
+        samples.append(
+            CounterSample(
+                instance=instance,
+                value=float(item.formatted_value.value.double_value),
+                counter_name=counter_name,
+                measured_at=measured_at,
+            )
+        )
+    return samples
+
+
 class GPUEngineCounter:
     """Sampling handle for wildcard ``GPU Engine`` performance counters."""
 
     def __init__(self) -> None:
-        self._dll = _pdh_api()
-        self._query = wintypes.HANDLE()
-        status = self._dll.PdhOpenQueryW(None, 0, ctypes.byref(self._query))
-        _require_success(status, "PdhOpenQueryW")
-        self._utilization = self._add_counter(_UTILIZATION_COUNTER)
-        self._running_time = self._add_counter(_RUNNING_TIME_COUNTER)
+        self._dll, self._query = _open_query()
+        self._utilization = _add_wildcard_counter(
+            self._dll, self._query, _GPU_ENGINE_OBJECT, _UTILIZATION_COUNTER
+        )
+        self._running_time = _add_wildcard_counter(
+            self._dll, self._query, _GPU_ENGINE_OBJECT, _RUNNING_TIME_COUNTER
+        )
         self._running_previous: dict[str, float] = {}
         self._running_collected_at: float | None = None
         self._closed = False
 
-    def _add_counter(self, counter_name: str) -> wintypes.HANDLE:
-        handle = wintypes.HANDLE()
-        path = rf"{_GPU_ENGINE_OBJECT}(*)\{counter_name}"
-        status = self._dll.PdhAddEnglishCounterW(
-            self._query,
-            path,
-            0,
-            ctypes.byref(handle),
-        )
-        _require_success(status, f"PdhAddEnglishCounterW({counter_name})")
-        return handle
+    def collect(self) -> None:
+        _collect_query(self._dll, self._query)
 
     def __enter__(self) -> "GPUEngineCounter":
         return self
@@ -357,50 +425,8 @@ class GPUEngineCounter:
             _require_success(status, "PdhCloseQuery")
             self._closed = True
 
-    def collect(self) -> None:
-        status = self._dll.PdhCollectQueryData(self._query)
-        _require_success(status, "PdhCollectQueryData")
-
     def _formatted_samples(self, counter: wintypes.HANDLE, counter_name: str) -> list[CounterSample]:
-        buffer_size = wintypes.DWORD()
-        item_count = wintypes.DWORD()
-        status = self._dll.PdhGetFormattedCounterArrayW(
-            counter,
-            _PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100,
-            ctypes.byref(buffer_size),
-            ctypes.byref(item_count),
-            None,
-        )
-        _require_success(status, f"PdhGetFormattedCounterArrayW({counter_name})", allow_more_data=True)
-        if not buffer_size.value:
-            return []
-
-        raw_buffer = ctypes.create_string_buffer(buffer_size.value)
-        items = ctypes.cast(raw_buffer, ctypes.POINTER(_PDH_FMT_COUNTERVALUE_ITEM_W))
-        status = self._dll.PdhGetFormattedCounterArrayW(
-            counter,
-            _PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100,
-            ctypes.byref(buffer_size),
-            ctypes.byref(item_count),
-            ctypes.byref(items[0]),
-        )
-        _require_success(status, f"PdhGetFormattedCounterArrayW({counter_name}) refill")
-        measured_at = time.time()
-        samples: list[CounterSample] = []
-        for index in range(item_count.value):
-            item = items[index]
-            if not item.name or item.formatted_value.status != 0:
-                continue
-            instance = parse_instance(item.name)
-            samples.append(
-                CounterSample(
-                    instance=instance,
-                    value=float(item.formatted_value.value.double_value),
-                    counter_name=counter_name,
-                    measured_at=measured_at,
-                )
-            )
-        return samples
+        return _formatted_counter_samples(self._dll, counter, counter_name)
 
     def sample_utilization(self) -> list[CounterSample]:
         self.collect()
@@ -441,3 +467,98 @@ class GPUEngineCounter:
     def prime_running_time(self, interval_s: float = 1.0) -> None:
         time.sleep(interval_s)
         self.sample_running_time_delta()
+
+#: Windows' Energy Metering Interface, surfaced as a performance-counter object.
+#: On this hardware the instances are RAPL domains published by the Intel driver,
+#: so the processor's own energy meter is readable by a standard user with no
+#: driver, service or elevation.
+_ENERGY_METER_OBJECT = r"\Energy Meter"
+_POWER_COUNTER = "Power"
+
+#: The package domain, e.g. ``RAPL_Package0_PKG``. The set also carries DRAM,
+#: cores-only (PP0) and uncore (PP1) domains, which are not the package total.
+_PACKAGE_SUFFIX = "_PKG"
+
+
+def select_package_watts(samples: Iterable[tuple[str, float]]) -> float | None:
+    """Sum the package domains from a set of (instance, watts) readings.
+
+    Returns None when no package domain is present, never zero: zero would read
+    as "measured, and the chip drew nothing", which is a different claim from
+    "this machine does not expose the counter".
+
+    The ``_Total`` instance is deliberately excluded. On the booth NUC it reads
+    0.00 W unconditionally while the demo draws about 20 W, so trusting it would
+    put a reassuring zero on screen at the worst possible moment.
+    """
+    total = 0.0
+    found = False
+    for name, watts in samples:
+        if not name or not name.upper().endswith(_PACKAGE_SUFFIX):
+            continue
+        if watts is None or watts < 0.0:
+            continue
+        total += float(watts)
+        found = True
+    return total if found else None
+
+
+class EnergyMeterCounter:
+    """Sampling handle for the ``Energy Meter`` power counters.
+
+    The ``Power`` counter is reported in **milliwatts**. That unit was measured,
+    not assumed: the same counter set publishes an ``Energy`` counter in
+    picowatt-hours, which the Energy Metering Interface documents, and
+    integrating that by hand over 2.035 s gave 3.17 W where ``Power`` reported
+    3.11 W. Dividing by 1000 here keeps every caller in watts.
+    """
+
+    _MILLIWATTS_PER_WATT = 1000.0
+
+    def __init__(self) -> None:
+        self._dll, self._query = _open_query()
+        self._power = _add_wildcard_counter(
+            self._dll, self._query, _ENERGY_METER_OBJECT, _POWER_COUNTER
+        )
+        self._closed = False
+        #: PDH needs a baseline before it can compute a rate. The first read
+        #: after opening reports 0.0 W -- measured -- which would put a
+        #: reassuring zero on screen for the first second of every demo.
+        self._baseline_pending = True
+        # Prime the query. PDH treats the first collection after opening as a
+        # baseline; reading immediately raises PDH_INVALID_DATA. The GPU counter
+        # is primed by its owner in the same way.
+        _collect_query(self._dll, self._query)
+
+    def collect(self) -> None:
+        _collect_query(self._dll, self._query)
+
+    def __enter__(self) -> "EnergyMeterCounter":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed:
+            status = self._dll.PdhCloseQuery(self._query)
+            _require_success(status, "PdhCloseQuery")
+            self._closed = True
+
+    def sample_package_watts(self) -> float | None:
+        _collect_query(self._dll, self._query)
+        samples = _formatted_counter_samples(self._dll, self._power, _POWER_COUNTER)
+        watts = select_package_watts(
+            (
+                sample.instance.instance_name,
+                sample.value / self._MILLIWATTS_PER_WATT,
+            )
+            for sample in samples
+        )
+        if self._baseline_pending:
+            # Measured: the first read after opening is 0.0 W even though the
+            # chip is drawing several watts. Report "no measurement yet" rather
+            # than a false zero; the next sample, 200 ms later, is real.
+            self._baseline_pending = False
+            return None
+        return watts

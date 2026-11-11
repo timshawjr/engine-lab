@@ -84,8 +84,13 @@ class Theme:
     # produces (metro's DET/s peaks around 888.6).
     header_stat_caption_font: int = 12
     header_stat_value_template: str = "8888.8"
-
     header_stat_value_font: int = 26
+    # How often the CHIP POWER tile may adopt a new wattage. The platform counter
+    # updates many times a second and wobbles by a fraction of a watt; a number
+    # that changes five times a second cannot be read from booth distance, and is
+    # the same defect that made the placement bar jitter. The tile shows the mean
+    # of this window, so a second is also the averaging period.
+    energy_publish_interval_s: float = 1.0
     overlay_border: int = 3
     minimum_window_width: int = 1280
     minimum_window_height: int = 720
