@@ -100,6 +100,11 @@ this automatically:
 .\python\python.exe -m app.main --selftest     # now 12 PASS, 0 FAIL
 ```
 
+The manifest ignores `__pycache__` and `*.pyc`, which the bundled interpreter
+writes on its first run (including a run of the verifier itself). Before that
+exclusion, `verify` reported dozens of EXTRA files on any bundle that had been
+launched once, which looked like a corrupted copy.
+
 Then confirm the demo actually renders, not just that tests pass:
 
 ```powershell

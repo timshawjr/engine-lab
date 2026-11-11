@@ -103,5 +103,53 @@ class BundleManifestTests(unittest.TestCase):
         self.assertEqual(verify(self.bundle), 1)
 
 
+class GeneratedBytecodeTests(unittest.TestCase):
+    """The bundle carries a Python interpreter. The first run of that
+    interpreter writes ``__pycache__`` trees -- including a run of the manifest
+    verifier itself. Hashing them made ``verify`` report dozens of EXTRA files on
+    every bundle a recipient had opened, which reads as "your copy is corrupt".
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.bundle = Path(self._tmp.name) / "engine-lab-portable"
+        (self.bundle / "app").mkdir(parents=True)
+        (self.bundle / "app" / "main.py").write_text("print(1)\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_bytecode_is_not_recorded_in_the_manifest(self) -> None:
+        cache = self.bundle / "app" / "__pycache__"
+        cache.mkdir()
+        (cache / "main.cpython-312.pyc").write_bytes(b"\x00" * 32)
+
+        manifest = build(self.bundle, None)
+
+        self.assertEqual(sorted(manifest["files"]), ["app/main.py"])
+
+    def test_bytecode_written_after_a_build_does_not_fail_verify(self) -> None:
+        build(self.bundle, None)
+        # Exactly what the first launch does.
+        for directory in (self.bundle / "app" / "__pycache__", self.bundle / "__pycache__"):
+            directory.mkdir(exist_ok=True)
+            (directory / "x.cpython-312.pyc").write_bytes(b"\x00" * 16)
+        self.assertEqual(verify(self.bundle), 0)
+
+    def test_a_stray_pyc_outside_a_cache_directory_is_ignored(self) -> None:
+        build(self.bundle, None)
+        (self.bundle / "loose.pyc").write_bytes(b"\x00" * 8)
+        self.assertEqual(verify(self.bundle), 0)
+
+    def test_a_real_extra_file_is_still_caught(self) -> None:
+        # Excluding bytecode must not blunt the truncation/copy check.
+        build(self.bundle, None)
+        cache = self.bundle / "__pycache__"
+        cache.mkdir()
+        (cache / "x.cpython-312.pyc").write_bytes(b"\x00" * 16)
+        (self.bundle / "unexpected.dll").write_bytes(b"\x00" * 16)
+        self.assertEqual(verify(self.bundle), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

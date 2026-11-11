@@ -57,6 +57,10 @@ catches it:
 Expect `OK <n> files match`. Anything else means the copy is incomplete — copy it
 again before a show.
 
+The check ignores `__pycache__` and `*.pyc`. Python writes those itself the first
+time it runs here, so they are not part of the bundle and are not evidence of
+anything; every other file must match.
+
 **The bundle is unsigned.** That manifest proves the files are the ones recorded
 here; it does **not** mean the software is trusted or from a verified publisher.
 Windows SmartScreen will warn on first run. Never disable Defender, an ASR rule or
