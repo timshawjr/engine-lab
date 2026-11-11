@@ -209,12 +209,12 @@ not use a camera or network. On this machine the measured cache-cold startup was
 Run any vertical explicitly with:
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --source loop --scenario retail        --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario metro        --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario manufacturing --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario education     --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario health       --mode spread --density 1 --fullscreen
-.venv\Scripts\python.exe -m app.main --source loop --scenario federal      --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source loop --scenario retail        --mode spread --density 1
+.venv\Scripts\python.exe -m app.main --source loop --scenario metro        --mode spread --density 1
+.venv\Scripts\python.exe -m app.main --source loop --scenario manufacturing --mode spread --density 1
+.venv\Scripts\python.exe -m app.main --source loop --scenario education     --mode spread --density 1
+.venv\Scripts\python.exe -m app.main --source loop --scenario health       --mode spread --density 1
+.venv\Scripts\python.exe -m app.main --source loop --scenario federal      --mode spread --density 1
 ```
 
 The six graphs are:
@@ -328,8 +328,11 @@ RSS numbers are not acceptance evidence.
 The deterministic loop is the default. A camera is never used unless explicitly requested:
 
 ```cmd
-.venv\Scripts\python.exe -m app.main --source camera:0 --scenario retail --mode spread --density 1 --fullscreen
+.venv\Scripts\python.exe -m app.main --source camera:0 --scenario retail --mode spread --density 1
 ```
+
+The booth UI starts fullscreen by default. Add `--no-fullscreen` when working on the layout
+during development and you want a resizable window instead.
 
 ## Keyboard map
 

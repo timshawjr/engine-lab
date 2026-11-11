@@ -481,7 +481,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="diagnostic: ignore the fingerprinted DeviceAvailability cache",
     )
-    parser.add_argument("--fullscreen", action="store_true", help="run the booth UI fullscreen")
+    parser.add_argument(
+        "--fullscreen",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "run the booth UI fullscreen (default). Use --no-fullscreen for a "
+            "window during development"
+        ),
+    )
     parser.add_argument(
         "--exit-after",
         type=float,
