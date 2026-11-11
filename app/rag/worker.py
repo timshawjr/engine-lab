@@ -178,25 +178,28 @@ class RagWorker(QObject):
             self.busy_changed.emit(False)
 
     def shutdown(self) -> None:
-        """Stop accepting work and tear the thread down. Safe to call twice.
+        """Stop accepting work and tear the thread down. Safe to call again.
 
-        The thread must be stopped before this QObject is destroyed. Leaving a
-        QThread running and letting Python garbage-collect it aborts the process
-        with STATUS_STACK_BUFFER_OVERRUN, so the page calls this from its own
-        shutdown path.
+        A QThread destroyed while still running aborts the process with
+        STATUS_STACK_BUFFER_OVERRUN, so the reference is released only once
+        ``wait()`` confirms the thread has stopped. If it does not stop within the
+        timeout the reference is kept and this may be called again: leaking a
+        thread at process exit is survivable, aborting in front of a customer is
+        not. Before this guard the reference was dropped unconditionally, which is
+        exactly the condition that produced that abort.
         """
-        if self._shutdown:
-            return
         self._shutdown = True
         thread = self._thread
-        if thread is not None:
-            thread.quit()
-            # A request already in flight holds the pipeline for its measured
-            # 1.3-2.0 s, so allow it to drain rather than cutting the model off
-            # mid-generation. Only after that is it safe to discard.
-            if not thread.wait(5000):
-                LOGGER.warning("RAG worker thread did not stop in time")
+        if thread is None:
+            return
+        thread.quit()
+        if thread.wait(5000):
             self._thread = None
+            return
+        LOGGER.warning(
+            "RAG worker thread did not stop within 5s; keeping the reference so it "
+            "cannot be destroyed while running. Call shutdown() again to retry."
+        )
 
 
 def load_backends(config: dict, root) -> RagBackends:

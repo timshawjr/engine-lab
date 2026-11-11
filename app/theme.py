@@ -134,7 +134,12 @@ class Theme:
     # Delay before the one-time stream re-alignment at startup. The stream
     # workers only exist after model compilation, so this must outlast it.
     startup_resync_ms: int = 6000
-    # How often to re-check alignment. The stream worker consumes frames very
+
+    # How long to wait for every stream to confirm a device/scenario change
+    # before saying so on screen. A compile plus a placement probe measured well
+    # under this; if it is ever exceeded, the honest thing is to report an
+    # unconfirmed change rather than leave the strip claiming one is in progress.
+    policy_transition_timeout_s: float = 8.0    # How often to re-check alignment. The stream worker consumes frames very
     # slightly slower than real time -- measured drift is about 18 frames per
     # minute, so a run of a few minutes visibly desynchronises. The worker only
     # actually seeks when the drift exceeds its minimum, so this is a check, not

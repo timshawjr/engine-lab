@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.rag.config import load_rag_backends, load_rag_config
+from app.rag.availability import RagAvailability, describe_failure
 from app.rag.generation import GENERATING_STATUS, RETRIEVING_STATUS
 from app.rag.worker import RagWorker
 from app.engine.availability import AvailabilityMatrix
@@ -66,6 +67,7 @@ from app.engine.pipelines import (
     build_stage_assignments,
 )
 from app.engine.runner import RetailVideoClock, RunnerInfo
+from app.engine.transitions import TransitionLedger
 from app.engine.stages import Detection, Keypoint
 from app.layout import use_compact_layout
 from app.overlay import source_to_display_rect
@@ -1303,15 +1305,23 @@ class MainWindow(QMainWindow):
         self.latest_telemetry: TelemetryFrame | None = None
         self.latest_image: QImage | None = None
         self.latest_image_size = (0, 0)
-        self.pending_acks: dict[int, set[int]] = {}
-        self.policy_requested_at: dict[int, float] = {}
-        self.policy_requested_monotonic: dict[int, float] = {}
+        # One record per in-flight policy/scenario change. Replaces three
+        # parallel dicts keyed by the same sequence number, which could drift out
+        # of step and which had no timeout.
+        self.transitions = TransitionLedger(
+            timeout_seconds=THEME.policy_transition_timeout_s
+        )
         self.policy_transitions: list[dict[str, Any]] = []
         self.scenario_history: list[dict[str, Any]] = []
         self.fallback_history: set[str] = set(self.prewarm_fallbacks)
         self.stream_fallbacks: dict[int, set[str]] = {}
         self.fallbacks: set[str] = set(self.prewarm_fallbacks)
         self.last_error: str | None = None
+        # Exists before the page is built, so nothing can read capability from a
+        # missing attribute. _init_rag replaces it with the real outcome.
+        self.rag_availability = RagAvailability.unavailable("not started yet.")
+        self.rag_worker: RagWorker | None = None
+        self.rag_config: dict = {}
         self.attract_index = SCENARIO_ORDER.index(self.scenario.id)
         self._last_rss_sample = 0.0
         self._build_ui()
@@ -1536,24 +1546,32 @@ class MainWindow(QMainWindow):
         self._init_rag()
 
     def _init_rag(self) -> None:
-        """Wire the document Q&A worker. Degrades quietly if models are absent."""
+        """Wire the document Q&A worker. Degrades quietly if models are absent.
+
+        The outcome is recorded in one place -- ``self.rag_availability`` -- so
+        the rest of the page never has to infer capability from ``rag_worker is
+        None``, which previously meant four different things at once.
+        """
         self.rag_worker: RagWorker | None = None
-        config_path = self.rag_config_path
-        if config_path is None:
+        self.rag_config: dict = {}
+
+        def disable(availability: RagAvailability) -> None:
+            self.rag_availability = availability
             self.rag_engine_label.setText("unavailable")
             self.rag_ask_button.setEnabled(False)
             self.rag_input.setEnabled(False)
-            self.rag_status.setText("Document Q&A unavailable: no config path supplied.")
+            self.rag_status.setText(availability.status_line())
+
+        config_path = self.rag_config_path
+        if config_path is None:
+            LOGGER.warning("Document Q&A disabled: no config path supplied")
+            disable(RagAvailability.unavailable("no configuration was supplied to this window."))
             return
         try:
             self.rag_config = load_rag_config(config_path)
         except Exception as exc:  # noqa: BLE001 - a missing config must not block the app
             LOGGER.warning("Document Q&A disabled: %s", exc)
-            self.rag_config = {}
-            self.rag_engine_label.setText("unavailable")
-            self.rag_ask_button.setEnabled(False)
-            self.rag_input.setEnabled(False)
-            self.rag_status.setText(f"Document Q&A unavailable: {exc}")
+            disable(RagAvailability.unavailable(describe_failure(exc)))
             return
 
         title = self.rag_config.get("document", {}).get(
@@ -1568,16 +1586,14 @@ class MainWindow(QMainWindow):
             backends = load_rag_backends(self.rag_config, config_path.resolve().parents[1])
         except Exception as exc:  # noqa: BLE001
             LOGGER.error("Could not start the document Q&A pipelines: %s", exc)
-            self.rag_engine_label.setText("unavailable")
-            self.rag_ask_button.setEnabled(False)
-            self.rag_input.setEnabled(False)
-            self.rag_status.setText(f"Document Q&A unavailable: {exc}")
+            disable(RagAvailability.unavailable(describe_failure(exc)))
             return
 
         self.rag_worker = RagWorker(backends, parent=self)
         self.rag_worker.answered.connect(self._on_rag_answered)
         self.rag_worker.failed.connect(self._on_rag_failed)
         self.rag_worker.status_changed.connect(self._on_rag_status)
+        self.rag_availability = RagAvailability.ready()
 
     def _on_rag_status(self, message: str) -> None:
         """Show which stage is running so a wait reads as progress, not a freeze."""
@@ -1638,9 +1654,7 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(self.page_index["demo"])
             self.current_page = "demo"
             self.rag_input.setFocus()
-        self.rag_ask_button.setEnabled(
-            visible and self.rag_worker is not None
-        )
+        self.rag_ask_button.setEnabled(visible and self.rag_availability.can_answer)
 
     def _ask_rag(self) -> None:
         question = self.rag_input.text().strip()
@@ -1648,14 +1662,20 @@ class MainWindow(QMainWindow):
             # Nothing to ask. Do not spend the measured 1.3 s to say so.
             self.rag_status.setText("Type a question first.")
             return
+        if not self.rag_availability.can_answer:
+            # _init_rag disabled the input, but --rag-ask drives this
+            # programmatically and must not raise. State the reason, which is a
+            # sentence written for a visitor rather than an exception.
+            self.rag_status.setText(self.rag_availability.status_line())
+            return
         if self.rag_worker is not None and self.rag_worker.is_busy():
             self.rag_status.setText("Still answering the previous question.")
             return
         if self.rag_worker is None:
-            # Config or pipelines unavailable. _init_rag already disabled the
-            # input, but --rag-ask drives this programmatically and must not
-            # raise AttributeError.
-            self.rag_status.setText("Document Q&A unavailable.")
+            LOGGER.error(
+                "RAG availability says READY but no worker exists; refusing to ask"
+            )
+            self.rag_status.setText("Document Q&A is not ready. Restart the demo.")
             return
         self.rag_ask_button.setEnabled(False)
         self.rag_answer.setText(RETRIEVING_STATUS)
@@ -2207,9 +2227,14 @@ class MainWindow(QMainWindow):
         sequence = self.runtime_sequence
         active_indices = set(range(snapshot.density))
         if not initial:
-            self.pending_acks[sequence] = set(active_indices)
-            self.policy_requested_at[sequence] = time.time()
-            self.policy_requested_monotonic[sequence] = requested_at
+            self.transitions.begin(
+                sequence=sequence,
+                scenario=self.scenario.id,
+                policy_label=snapshot.label,
+                streams=set(active_indices),
+                requested_at=time.time(),
+                requested_monotonic=requested_at,
+            )
         removed = [
             self.stream_workers.pop(index)
             for index in list(self.stream_workers)
@@ -2305,9 +2330,24 @@ class MainWindow(QMainWindow):
         self.stream_fallbacks.clear()
         requested_at = time.monotonic()
         active_indices = set(range(self.policy_snapshot.density))
-        self.pending_acks[self.runtime_sequence] = set(active_indices)
-        self.policy_requested_at[self.runtime_sequence] = time.time()
-        self.policy_requested_monotonic[self.runtime_sequence] = requested_at
+        # Acks for the superseded scenario are filtered out by the workers, so
+        # keeping its entry would leak it and leave the strip waiting for an ack
+        # that can never arrive.
+        dropped = self.transitions.discard_stale(keep_sequence=self.runtime_sequence)
+        if dropped:
+            LOGGER.info(
+                "Discarded %d superseded transition(s) on scenario switch: %s",
+                len(dropped),
+                [t.sequence for t in dropped],
+            )
+        self.transitions.begin(
+            sequence=self.runtime_sequence,
+            scenario=self.scenario.id,
+            policy_label=self.policy_snapshot.label,
+            streams=set(active_indices),
+            requested_at=time.time(),
+            requested_monotonic=requested_at,
+        )
         for index, worker in self.stream_workers.items():
             worker.set_runtime(
                 self.runtime_sequence,
@@ -2358,6 +2398,46 @@ class MainWindow(QMainWindow):
         # main thread is blocked in a C call that holds the GIL, which is the case that actually
         # hangs; this timer is C-level and still fires, so the stack is captured either way.
         hangwatch.arm_dump_later()
+        self._expire_policy_transitions()
+
+    def _expire_policy_transitions(self) -> None:
+        """Say so if a requested change was never confirmed.
+
+        Silent success is the failure mode this guards against: without a timeout
+        the status strip simply never confirmed the change, leaving an operator to
+        assume the hardware had accepted it.
+        """
+        expired = self.transitions.expire(time.monotonic())
+        if not expired:
+            return
+        for transition in expired:
+            LOGGER.error(
+                "Policy transition %d (%s, %s) was not confirmed by %d stream(s) "
+                "within %.0fs",
+                transition.sequence,
+                transition.scenario,
+                transition.policy_label,
+                len(transition.awaiting),
+                THEME.policy_transition_timeout_s,
+            )
+            self.policy_transitions.append(
+                {
+                    "sequence": transition.sequence,
+                    "scenario": transition.scenario,
+                    "policy": transition.policy_label,
+                    "all_streams_ms": None,
+                    "requested_at": transition.requested_at,
+                    "requested_monotonic": transition.requested_monotonic,
+                    "at": time.time(),
+                    "outcome": "timeout",
+                    "unconfirmed_streams": sorted(transition.awaiting),
+                }
+            )
+        # Report it as unconfirmed rather than as live or as nothing at all.
+        self.status_label.setText(
+            "Device change NOT confirmed — the picture may still be on the previous "
+            "placement. Press F1 for details."
+        )
 
     def _on_video_frame(self, image: QImage, frame_index: int) -> None:
         self.latest_image = image
@@ -2440,26 +2520,23 @@ class MainWindow(QMainWindow):
             self._update_pipeline_metrics()
         self.stream_fallbacks[index] = set(data.get("fallbacks", []))
         self._refresh_fallback_display()
-        pending = self.pending_acks.get(sequence)
+        pending = self.transitions.acknowledge(sequence, index)
         if pending is not None:
-            pending.discard(index)
-            if not pending:
-                self.pending_acks.pop(sequence, None)
-                self.policy_transitions.append(
-                    {
-                        "sequence": sequence,
-                        "scenario": self.scenario.id,
-                        "policy": self.policy_snapshot.label,
-                        "all_streams_ms": transition_ms,
-                        "requested_at": self.policy_requested_at.get(sequence),
-                        "requested_monotonic": self.policy_requested_monotonic.get(sequence),
-                        "at": time.time(),
-                    }
-                )
-                self.status_label.setText(
-                    f"Policy/scenario live in {transition_ms:.0f} ms · "
-                    f"{self.scenario.title} · F1 operator"
-                )
+            self.policy_transitions.append(
+                {
+                    "sequence": pending.sequence,
+                    "scenario": pending.scenario,
+                    "policy": pending.policy_label,
+                    "all_streams_ms": transition_ms,
+                    "requested_at": pending.requested_at,
+                    "requested_monotonic": pending.requested_monotonic,
+                    "at": time.time(),
+                }
+            )
+            self.status_label.setText(
+                f"Policy/scenario live in {transition_ms:.0f} ms · "
+                f"{self.scenario.title} · F1 operator"
+            )
 
     def _on_telemetry(self, frame: TelemetryFrame) -> None:
         self.latest_telemetry = frame
