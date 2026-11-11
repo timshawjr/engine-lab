@@ -67,6 +67,7 @@ from app.engine.pipelines import (
     build_stage_assignments,
 )
 from app.engine.runner import RetailVideoClock, RunnerInfo
+from app.engine.placement_share import PlacementShares
 from app.engine.transitions import TransitionLedger
 from app.engine.stages import Detection, Keypoint
 from app.layout import use_compact_layout
@@ -1014,14 +1015,31 @@ class StageBreakdown(QFrame):
         self.compact = compact
         self._task_labels = task_labels or {}
         self._metrics: tuple[StageMetric, ...] = ()
+        # Segment shares are throttled and smoothed rather than recomputed from
+        # the live timings on every repaint: those vary frame to frame, so the
+        # segments -- and the labels centred in them -- used to resize and
+        # re-elide continuously.
+        self._share = PlacementShares(
+            interval_s=THEME.placement_share_interval_s,
+            smoothing=THEME.placement_share_smoothing,
+            precision=THEME.placement_share_precision,
+        )
         self.setMinimumHeight(60 if compact else 70)
         self.setStyleSheet(
             f"background: {THEME.panel_alt}; border: 1px solid {THEME.border}; "
             f"border-radius: {THEME.radius_small}px;"
         )
 
-    def set_metrics(self, metrics: tuple[StageMetric, ...]) -> None:
+    def set_metrics(
+        self, metrics: tuple[StageMetric, ...], *, now: float | None = None
+    ) -> None:
+        """Record new timings, updating the drawn shares at most twice a second."""
         self._metrics = metrics
+        moment = time.perf_counter() if now is None else now
+        self._share.update(
+            [metric.inference_ms + metric.postprocess_ms for metric in metrics],
+            moment,
+        )
         self.update()
 
     def paintEvent(self, event: Any) -> None:
@@ -1052,8 +1070,6 @@ class StageBreakdown(QFrame):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 f"CPU workload: {_short_model_name(cpu_metric.model_id, cpu_metric.stage)}",
             )
-        durations = [metric.inference_ms + metric.postprocess_ms for metric in self._metrics]
-        total = sum(durations)
         bar = QRectF(
             THEME.spacing_sm,
             26 if self.compact else 30,
@@ -1061,11 +1077,14 @@ class StageBreakdown(QFrame):
             22 if self.compact else THEME.gauge_height,
         )
         painter.fillRect(bar, QColor(THEME.border))
-        if total > 0.0 and self._metrics:
+        # Draw from the throttled, smoothed shares, not the live durations: the
+        # live ones change every frame and made the segments visibly wobble.
+        shares = self._share.shares
+        if self._metrics and len(shares) == len(self._metrics):
             cursor = bar.left()
             colors = (THEME.npu, THEME.gpu, THEME.cpu, THEME.warning)
-            for index, (metric, duration) in enumerate(zip(self._metrics, durations)):
-                width = bar.width() * duration / total
+            for index, metric in enumerate(self._metrics):
+                width = bar.width() * shares[index]
                 segment = QRectF(cursor, bar.top(), width, bar.height())
                 painter.fillRect(segment, QColor(colors[index % len(colors)]))
                 if width >= 60:

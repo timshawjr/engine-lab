@@ -51,7 +51,7 @@ class Theme:
     # from its actual widget height, so the column may compress the tiles
     # below the design height without truncating the value.
     gauge_min_height: int = 76
-    gauge_min_height_compact: int = 115
+    gauge_min_height_compact: int = 88
     gauge_header_height: int = 28
     gauge_value_font: int = 56
     gauge_value_font_compact: int = 40
@@ -139,7 +139,21 @@ class Theme:
     # before saying so on screen. A compile plus a placement probe measured well
     # under this; if it is ever exceeded, the honest thing is to report an
     # unconfirmed change rather than leave the strip claiming one is in progress.
-    policy_transition_timeout_s: float = 8.0    # How often to re-check alignment. The stream worker consumes frames very
+    policy_transition_timeout_s: float = 8.0
+
+    #: Normalised segment shares, held between throttled updates. Computed from
+    #: live inference timings, which vary every frame -- drawing those directly
+    #: made the segments (and the labels centred inside them) resize and re-elide
+    #: continuously, which reads as jitter.
+    placement_share_interval_s: float = 0.5
+    #: Exponential smoothing applied to each share update. Low enough that one
+    #: slow frame cannot jump a segment, high enough to follow a real shift.
+    placement_share_smoothing: float = 0.25
+    #: Shares are rounded to this many decimal places before drawing, so a
+    #: sub-percent wobble does not move a segment edge by a pixel.
+    placement_share_precision: int = 2
+
+    # How often to re-check alignment. The stream worker consumes frames very
     # slightly slower than real time -- measured drift is about 18 frames per
     # minute, so a run of a few minutes visibly desynchronises. The worker only
     # actually seeks when the drift exceeds its minimum, so this is a check, not
