@@ -293,6 +293,49 @@ the problem is found at the venue rather than in front of a customer.
 
 ---
 
+## What you may and may not say
+
+The single most useful page in this guide. If a claim is not on the left, it is on
+the right.
+
+**May say** — each of these is measured and reproducible on the booth machine:
+
+- Six verticals run from real footage, with detection on the NPU and classification
+  on the GPU, and the placement bar shows where each stage actually landed.
+- `F1` shows the `EXECUTION_DEVICES` the runtime reported for every model. That is
+  the proof of placement, not the device you asked for.
+- The demo runs with the network disconnected. Unplug it and show them.
+- Document Q&A answers from a 321-page NIST guide, retrieves in ~30–100 ms, and
+  shows the pages it used.
+- Detection holds ~24 FPS and ~200–260 DET/s on the development machine.
+- NPU 21–25%, GPU 34–57%, CPU 82–90% at density 2.
+
+**Must say "on this machine"** with every performance number. Graphics and CPU
+numbers are only true for the hardware and drivers they were measured on.
+
+**Must not say:**
+
+- *"The NPU does everything."* It does not. One detector is on the NPU, the other
+  on the GPU, classification on the GPU, counting on the CPU. Say that — it is more
+  impressive than a vague claim, and it survives `F1`.
+- *"The NPU runs at 48 TOPS."* 48 TOPS is Intel's **peak** figure. The demo reaches
+  ~21–25%. If you quote the peak, say "peak".
+- *"Document Q&A makes the video faster."* Measured with and without: the delta was
+  inside run-to-run noise. Say "no measurable impact", not "faster".
+- *"It knows everything."* It answers only from NIST SP 800-82r4 and declines
+  otherwise.
+- *"The package is signed."* It is not. Windows will warn on first run.
+- Any number you have not seen on that machine today.
+
+**Must not do:**
+
+- Disable Defender, an ASR rule, AppLocker or the execution policy to make the
+  unsigned bundle run. If a step needs elevation, it is an **install step for a
+  human**, not a runtime step; the application itself runs as a standard user.
+- Quote a figure from `bench_report.md` after an Intel driver update without
+  re-running `verify-booth.bat`. An update invalidates the NPU blob cache and the
+  numbers move.
+
 ## The 30-second version
 
 > One NUC, one SoC. Six live video scenarios - detection on the NPU,

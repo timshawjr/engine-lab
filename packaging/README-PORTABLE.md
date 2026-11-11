@@ -44,6 +44,25 @@ built into the bundle.
 **You can move or rename the folder.** Every path is relative to the folder
 itself, so extracting somewhere different is fine.
 
+## Verify the copy you received
+
+The folder contains `bundle-manifest.json` and `MANIFEST.sha256`, recording the
+SHA-256 of every file. If a copy was interrupted or a file was changed, this
+catches it:
+
+```powershell
+.\python\python.exe tools\bundle_manifest.py verify .
+```
+
+Expect `OK <n> files match`. Anything else means the copy is incomplete — copy it
+again before a show.
+
+**The bundle is unsigned.** That manifest proves the files are the ones recorded
+here; it does **not** mean the software is trusted or from a verified publisher.
+Windows SmartScreen will warn on first run. Never disable Defender, an ASR rule or
+the execution policy to make it run — if a step needs elevation, it is an install
+step for a human, not a runtime step.
+
 ## First launch is slow — this is expected
 
 The first double-click takes a few seconds longer while the models load. The
@@ -58,6 +77,9 @@ before visitors arrive.
   confusingly. Each machine builds its own on first run. That is why the first
   launch is slower than the second.
 - Any install of Python, or any package from the internet.
+- Any assessment of the third-party licence obligations. `NOTICE.md` records what
+  each upstream source declares — including that `yolo11n` is AGPL-3.0 — but it does
+  not claim those obligations have been met. Read it before redistributing.
 
 ## One honest caveat
 

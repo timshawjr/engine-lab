@@ -44,7 +44,7 @@ Copy-Item ".venv\Lib\site-packages\*" "$root\python\Lib\site-packages" -Recurse 
 foreach ($d in @("app","config","docs","tests","tools","video-assets")) {
   Copy-Item $d "$root\$d" -Recurse -Force
 }
-foreach ($f in @("requirements.txt","README.md","AGENTS.md","bench_report.md","SALES-GUIDE.md","START-HERE.md")) {
+foreach ($f in @("requirements.txt","README.md","AGENTS.md","bench_report.md","SALES-GUIDE.md","START-HERE.md","NOTICE.md")) {
   Copy-Item $f $root -Force
 }
 
@@ -66,6 +66,11 @@ foreach ($d in @("cache","logs","__pycache__")) {
 }
 Remove-Item -Recurse -Force "$root\cache","$root\logs" -ErrorAction SilentlyContinue
 
+# 6b. Record a SHA-256 manifest of every payload file. This is what lets a
+#     recipient tell a complete copy from a truncated one, and it states plainly
+#     that the bundle is unsigned. Takes about 90 s over 3.7 GB.
+python tools/bundle_manifest.py build $root --source-commit (git rev-parse --short HEAD)
+
 # 7. Zip. Compresses to roughly 2.6 GB; takes about four minutes.
 $zip = "$env:TEMP\engine-lab-portable.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
@@ -82,6 +87,7 @@ the bundle is not silently using the build machine's interpreter:
 ```powershell
 $env:PATH = (($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python' }) -join ';')
 cd "$env:TEMP\engine-lab-portable"
+.\python\python.exe tools\bundle_manifest.py verify .   # expect "OK ... files match"
 .\python\python.exe -m app.main --selftest     # expect 12 PASS, 0 FAIL
 ```
 
