@@ -3,7 +3,10 @@
 The bundle that teammates run is a **build artifact**, not source. It goes stale
 whenever the code changes, so rebuild it after any change you want them to have.
 
-Output: `engine-lab-portable.zip`, about **2.6 GB** (3.7 GB unpacked).
+Output: `engine-lab-portable-v<N>.zip`, about **2.6 GB** (3.7 GB unpacked), kept
+next to the repo rather than inside it. The version suffix is incremented per
+build (`v1`, `v2`, `v3`, …) so a colleague can tell which snapshot they hold and
+you can tell which one they are asking about.
 
 ## Why this approach
 
@@ -71,12 +74,25 @@ Remove-Item -Recurse -Force "$root\cache","$root\logs" -ErrorAction SilentlyCont
 #     that the bundle is unsigned. Takes about 90 s over 3.7 GB.
 python tools/bundle_manifest.py build $root --source-commit (git rev-parse --short HEAD)
 
-# 7. Zip. Compresses to roughly 2.6 GB; takes about four minutes.
-$zip = "$env:TEMP\engine-lab-portable.zip"
+# 7. Zip. Compresses to roughly 2.6 GB; takes about 1.5 minutes.
+#    Keep it OUTSIDE the repo: it is an artifact, and 2.6 GB does not belong in git.
+$version = "v3"                                  # increment per build
+$zip = "C:\dev\engine-lab-portable-$version.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
   $root, $zip, [System.IO.Compression.CompressionLevel]::Fastest, $true)
+```
+
+Do not run the bundled interpreter between the final clean and the zip: it writes
+`__pycache__` back into the payload. The manifest ignores bytecode, so `verify`
+stays green, but the archive should not carry build residue. Check the archive
+itself afterwards:
+
+```powershell
+$za = [System.IO.Compression.ZipFile]::OpenRead($zip)
+($za.Entries | Where-Object { $_.FullName -match "__pycache__|\.pyc$" }).Count   # expect 0
+$za.Dispose()
 ```
 
 ## Verify before shipping
