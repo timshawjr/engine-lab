@@ -74,19 +74,58 @@ class ResyncRequestTests(unittest.TestCase):
 
 
 class SeekDirectionTests(unittest.TestCase):
-    """Only ever seek FORWARD.
+    """A worker ahead of the clock must be pulled back, not left ahead.
 
-    The clips loop, so a negative drift usually means the clock has wrapped past
-    the worker rather than that the worker is ahead. Seeking backwards there
-    would replay content.
+    The original rule was "only seek forward", justified by not replaying
+    content. That reasoning was wrong: the worker's frames are never displayed,
+    only its detections are, drawn over the clock's frame. Meanwhile the clips
+    loop, so the two captures regularly end up in different laps and the worker
+    is ahead by hundreds of frames -- measured on health as -372 and -295, both
+    refused, leaving the wireframe describing frames the screen had not reached.
+
+    The history is kept because the reversal is deliberate, not an oversight.
     """
 
-    def test_only_positive_drift_triggers_a_seek(self) -> None:
+    def _worker(self) -> ScenarioStreamWorker:
+        return ResyncRequestTests()._worker()
+
+    def test_a_worker_far_ahead_seeks_back_to_the_clock(self) -> None:
+        worker = self._worker()
+        worker._reference_frame = 92
+        worker.last_position = 464
+        decision = worker._resync_decision()
+        self.assertEqual(decision.seek_to, 92)
+
+    def test_a_worker_behind_seeks_forward_to_the_clock(self) -> None:
+        worker = self._worker()
+        worker._reference_frame = 500
+        worker.last_position = 100
+        self.assertEqual(worker._resync_decision().seek_to, 500)
+
+    def test_a_small_lead_is_tolerated(self) -> None:
+        worker = self._worker()
+        worker._reference_frame = 100
+        worker.last_position = 108
+        self.assertIsNone(worker._resync_decision().seek_to)
+
+    def test_a_reading_of_minus_one_postpones_rather_than_cancels(self) -> None:
+        # The backend reports -1 for a frame or two after a seek or reopen. The
+        # request must stay armed: the old code cleared it first and then found
+        # it could not act, losing the correction until the next device change.
+        worker = self._worker()
+        worker._reference_frame = 500
+        worker.last_position = -1
+        decision = worker._resync_decision()
+        self.assertIsNone(decision.seek_to)
+        self.assertTrue(decision.retry)
+
+    def test_the_worker_never_uses_the_clock_counter(self) -> None:
+        # The clock's cumulative counter climbs past the file length while a
+        # capture wraps at it; syncing to it once seeked past the end every frame.
         source = Path("app/engine/pipelines.py").read_text(encoding="utf-8")
-        marker = "if self._resync_requested:"
-        body = source[source.index(marker) : source.index(marker) + 900]
-        self.assertIn("drift > self.RESYNC_MINIMUM_DRIFT_FRAMES", body)
-        self.assertNotIn("abs(drift)", body)
+        marker = "def _resync_decision"
+        body = source[source.index(marker) : source.index(marker) + 600]
+        self.assertIn("self._reference_frame", body)
 
 
 class ClockReferenceTests(unittest.TestCase):
@@ -143,8 +182,9 @@ class TriggerWiringTests(unittest.TestCase):
         from app.theme import THEME
 
         source = Path("app/engine/pipelines.py").read_text(encoding="utf-8")
-        marker = "if self._resync_requested:"
-        body = source[source.index(marker) : source.index(marker) + 900]
+        marker = "def _resync_decision"
+        body = source[source.index(marker) : source.index(marker) + 600]
+        self.assertIn("decide_resync(", body)
         self.assertIn("RESYNC_MINIMUM_DRIFT_FRAMES", body)
         # And the interval must be long enough that a seek is rare.
         self.assertGreaterEqual(THEME.resync_interval_ms, 5000)
@@ -154,6 +194,85 @@ class TriggerWiringTests(unittest.TestCase):
         marker = "if self._resync_requested:"
         body = source[source.index(marker) : source.index(marker) + 900]
         self.assertIn("self._resync_requested = False", body)
+
+
+class SelfCorrectionTests(unittest.TestCase):
+    """The worker must bound its own lag, not rely on the UI to ask.
+
+    The device-change request is one-shot. Leaving the NPU and GPU off drops
+    inference to CPU, where the worker cannot keep up with the clock, and the
+    next correction is up to a periodic tick away. Measured during that stretch:
+    drift p50 29-60, p95 up to 143 frames -- several seconds of boxes describing
+    an earlier moment, which is exactly the demo beat "now it is on CPU".
+    """
+
+    class _Capture:
+        def __init__(self) -> None:
+            self.position = -1
+
+        def set(self, prop, value):  # noqa: ANN001, ARG002
+            self.position = value
+            return True
+
+    def _worker(self) -> ScenarioStreamWorker:
+        worker = ResyncRequestTests()._worker()
+        worker.resynced_backwards = 0
+        worker._last_resync_at = float("-inf")
+        return worker
+
+    def test_the_hard_limit_bounds_visible_lag(self) -> None:
+        # Under two seconds of frames at the slowest clip rate (24 fps).
+        self.assertLess(ScenarioStreamWorker.RESYNC_HARD_LIMIT_FRAMES / 24.0, 2.0)
+
+    def test_the_hard_limit_is_far_above_the_ordinary_threshold(self) -> None:
+        # Otherwise the worker would correct constantly, which broke tracking.
+        self.assertGreater(
+            ScenarioStreamWorker.RESYNC_HARD_LIMIT_FRAMES,
+            ScenarioStreamWorker.RESYNC_MINIMUM_DRIFT_FRAMES * 5,
+        )
+
+    def test_self_corrections_are_spaced_out(self) -> None:
+        # 24 seeks in 20 s is the failure mode this rate limit prevents.
+        self.assertGreaterEqual(ScenarioStreamWorker.RESYNC_SELF_MIN_INTERVAL_S, 1.0)
+
+    def test_applying_a_correction_moves_the_capture_and_counts_it(self) -> None:
+        worker = self._worker()
+        capture = self._Capture()
+        worker._reference_frame = 500
+        worker.last_position = 100
+        worker._seek_to_reference(capture, worker._resync_decision())
+        self.assertEqual(capture.position, 500)
+        self.assertEqual(worker.last_position, 500)
+        self.assertEqual(worker.resynced_frames, 400)
+        self.assertEqual(worker.resynced_backwards, 0)
+
+    def test_a_backward_correction_is_counted_separately(self) -> None:
+        worker = self._worker()
+        capture = self._Capture()
+        worker._reference_frame = 92
+        worker.last_position = 464
+        worker._seek_to_reference(capture, worker._resync_decision())
+        self.assertEqual(capture.position, 92)
+        self.assertEqual(worker.resynced_backwards, 1)
+
+    def test_applying_a_correction_stamps_the_time(self) -> None:
+        import time as _time
+
+        worker = self._worker()
+        before = _time.monotonic()
+        worker._reference_frame = 500
+        worker.last_position = 100
+        worker._seek_to_reference(self._Capture(), worker._resync_decision())
+        self.assertGreaterEqual(worker._last_resync_at, before)
+
+    def test_a_decision_with_no_seek_does_not_move_the_capture(self) -> None:
+        worker = self._worker()
+        capture = self._Capture()
+        worker._reference_frame = 100
+        worker.last_position = 101
+        worker._seek_to_reference(capture, worker._resync_decision())
+        self.assertEqual(capture.position, -1)
+        self.assertEqual(worker.resynced_frames, 0)
 
 
 class DetectionQualityGuardTests(unittest.TestCase):

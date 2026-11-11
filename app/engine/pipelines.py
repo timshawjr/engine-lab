@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import time
 import traceback
@@ -20,6 +21,7 @@ from PySide6.QtCore import QThread, Signal
 from app.engine.availability import AvailabilityMatrix
 from app.engine.device_policy import DeviceMode, DevicePolicy, PolicySnapshot
 from app.engine.events import BusinessEvent, EventTracker
+from app.engine.resync import ResyncDecision, decide_resync
 from app.engine.runner import (
     CompiledModelStore,
     OpenVINOSingleRunner,
@@ -50,6 +52,11 @@ from app.scenarios.retail import classification_allowed, classification_candidat
 from app.telemetry.npu_fallback import NpuDutyCycle
 
 LOGGER = logging.getLogger("engine_lab")
+
+#: Temporary diagnostic: log every resync decision, including the ones that
+#: decline to seek. A resync that is refused is silently lost today, so seeing
+#: the refusal reason is the difference between a theory and a measurement.
+_TRACE_SYNC = os.environ.get("ENGINE_LAB_TRACE_SYNC") == "1"
 
 
 LOGICAL_STAGES = {"zone_event", "posture_event", "track_event"}
@@ -559,6 +566,31 @@ class ScenarioStreamWorker(QThread):
     #: noticeable misalignment.
     RESYNC_MINIMUM_DRIFT_FRAMES = 3
 
+    #: How far the worker may be AHEAD of the display clock before it is pulled
+    #: back. The clips loop, so the two captures regularly end up in different
+    #: laps; measured at a booth as boxes that no longer matched the video after
+    #: N, G, then both back on, with drift of -372 and -295 frames.
+    #:
+    #: Higher than the forward threshold because a backward seek resets the
+    #: tracker and can re-emit events for frames already seen, whereas jitter of
+    #: a frame or two is invisible. It is invisible to a visitor for the same
+    #: reason it is safe: the worker's frames are never displayed, only its
+    #: detections, drawn over the clock's frame.
+    RESYNC_BACKWARD_MINIMUM_DRIFT_FRAMES = 15
+
+    #: Lag beyond which the worker corrects itself without waiting to be asked.
+    #: The device-change request is one-shot, and leaving the NPU and GPU off
+    #: drops inference to CPU, where the worker cannot keep up with the clock:
+    #: measured drift grew to p95 143 frames (about five seconds) before the next
+    #: periodic tick. That whole stretch is a demo beat -- "now it is on CPU" --
+    #: and boxes trailing the picture by seconds undermines it.
+    RESYNC_HARD_LIMIT_FRAMES = 45
+
+    #: Minimum spacing between self-corrections. Seeking every frame is what
+    #: broke tracking on the first attempt (24 seeks in 20 s); this bounds it to
+    #: one jump per couple of seconds at most.
+    RESYNC_SELF_MIN_INTERVAL_S = 2.0
+
     frame_ready = Signal(int, object)
     placement_ready = Signal(int, object, int, float)
     failed = Signal(int, str)
@@ -608,6 +640,14 @@ class ScenarioStreamWorker(QThread):
         self._resync_requested = False
         #: Frames seeked over, for diagnostics.
         self.resynced_frames = 0
+        #: How many of those corrections pulled the worker BACKWARDS, to rejoin a
+        #: clock that had not yet reached it. Worth counting separately: a
+        #: persistent count means the worker is running ahead of the clock and the
+        #: pacing, not the resync, is what needs looking at.
+        self.resynced_backwards = 0
+        #: When the last correction was applied, so the self-correction cannot
+        #: fire more often than RESYNC_SELF_MIN_INTERVAL_S.
+        self._last_resync_at = float("-inf")
         #: Last observed capture position, for diagnostics.
         self.last_position = -1
         # stage -> device string that failed to compile for that stage. Used so a known-failing
@@ -1144,6 +1184,35 @@ class ScenarioStreamWorker(QThread):
         """
         self._resync_requested = True
 
+    def _resync_decision(self) -> ResyncDecision:
+        """Compare the clock's position with this worker's, without acting.
+
+        Extracted so the rule can be tested without a video capture: the failure
+        it fixes (a backward correction being refused) cannot be reproduced by
+        inspecting widget state.
+        """
+        return decide_resync(
+            reference=self._reference_frame,
+            position=self.last_position,
+            minimum_forward=self.RESYNC_MINIMUM_DRIFT_FRAMES,
+            minimum_backward=self.RESYNC_BACKWARD_MINIMUM_DRIFT_FRAMES,
+        )
+
+    def _seek_to_reference(self, capture: Any, decision: ResyncDecision) -> None:
+        """Apply a decided correction to the worker's own capture.
+
+        Records the jump for diagnostics and stamps the time, so the self-
+        correction cannot fire more often than its interval.
+        """
+        if decision.seek_to is None:
+            return
+        capture.set(cv2.CAP_PROP_POS_FRAMES, decision.seek_to)
+        self.resynced_frames += abs(decision.drift)
+        self.last_position = decision.seek_to
+        if decision.drift < 0:
+            self.resynced_backwards += 1
+        self._last_resync_at = time.monotonic()
+
     def run(self) -> None:
         capture_cache: dict[
             str,
@@ -1212,19 +1281,44 @@ class ScenarioStreamWorker(QThread):
                     self.last_position = int(capture.get(cv2.CAP_PROP_POS_FRAMES))
                 except Exception:  # noqa: BLE001 - backend-dependent
                     self.last_position = -1
-                # Rejoin the display clock, but only when a device change asked
-                # us to. One seek per device change. Only ever seek FORWARD: a
-                # negative drift means the clock has wrapped past us (the clip
-                # loops), which needs no correction, and seeking backwards would
-                # replay content.
+                # Rejoin the display clock. Two ways this happens:
+                #   1. A device change or the periodic check asked for it.
+                #   2. Nobody asked, but the worker has fallen so far behind that
+                #      the overlay is seconds stale -- the CPU stretch of the
+                #      demo, where the worker cannot keep up with the clock.
+                # Either direction may be needed: the clips loop, so the clock
+                # can wrap while the worker is mid-file and the correction is
+                # backwards. The worker's frames are never displayed, so a
+                # backward seek is invisible to a visitor.
+                decision = self._resync_decision()
                 if self._resync_requested:
-                    self._resync_requested = False
-                    if self._reference_frame >= 0 and self.last_position >= 0:
-                        drift = self._reference_frame - self.last_position
-                        if drift > self.RESYNC_MINIMUM_DRIFT_FRAMES:
-                            capture.set(cv2.CAP_PROP_POS_FRAMES, self._reference_frame)
-                            self.resynced_frames += drift
-                            self.last_position = self._reference_frame
+                    if decision.retry:
+                        # The backend reported -1 for a frame or two after a seek
+                        # or reopen. Keep the request armed instead of throwing
+                        # the correction away; nothing else would retry it until
+                        # the next device change.
+                        pass
+                    else:
+                        self._resync_requested = False
+                        if decision.seek_to is not None:
+                            self._seek_to_reference(capture, decision)
+                elif (
+                    decision.seek_to is not None
+                    and abs(decision.drift) >= self.RESYNC_HARD_LIMIT_FRAMES
+                    and (
+                        time.monotonic() - self._last_resync_at
+                        >= self.RESYNC_SELF_MIN_INTERVAL_S
+                    )
+                ):
+                    self._seek_to_reference(capture, decision)
+                if _TRACE_SYNC:
+                    print(
+                        f"[sync] stream={self.stream_index} ref={self._reference_frame} "
+                        f"pos={self.last_position} drift={decision.drift} "
+                        f"sought={decision.seek_to is not None} "
+                        f"retry={decision.retry} reason={decision.reason}",
+                        flush=True,
+                    )
                 decode_started = time.perf_counter()
                 ok, frame = capture.read()
                 decode_ms = (time.perf_counter() - decode_started) * 1000.0
