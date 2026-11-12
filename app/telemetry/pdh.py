@@ -515,6 +515,13 @@ class EnergyMeterCounter:
 
     _MILLIWATTS_PER_WATT = 1000.0
 
+    #: RAPL integrates energy over time, so two collections microseconds apart
+    #: divide a near-zero delta by a tiny interval. Measured: three back-to-back
+    #: calls returned 0.0 W while the chip was drawing about 4 W. The telemetry
+    #: thread samples at 5 Hz, well clear of this, but a caller in a tight loop
+    #: must not be handed a zero that looks like a measurement.
+    _MIN_SAMPLE_INTERVAL_S = 0.05
+
     def __init__(self) -> None:
         self._dll, self._query = _open_query()
         self._power = _add_wildcard_counter(
@@ -525,6 +532,10 @@ class EnergyMeterCounter:
         #: after opening reports 0.0 W -- measured -- which would put a
         #: reassuring zero on screen for the first second of every demo.
         self._baseline_pending = True
+        #: Last reading and when it was taken, so a caller sampling faster than
+        #: the counter integrates is handed that reading rather than a false zero.
+        self._last_watts: float | None = None
+        self._last_sampled_at: float | None = None
         # Prime the query. PDH treats the first collection after opening as a
         # baseline; reading immediately raises PDH_INVALID_DATA. The GPU counter
         # is primed by its owner in the same way.
@@ -546,6 +557,14 @@ class EnergyMeterCounter:
             self._closed = True
 
     def sample_package_watts(self) -> float | None:
+        now = time.monotonic()
+        if (
+            self._last_sampled_at is not None
+            and now - self._last_sampled_at < self._MIN_SAMPLE_INTERVAL_S
+        ):
+            return self._last_watts
+        self._last_sampled_at = now
+
         _collect_query(self._dll, self._query)
         samples = _formatted_counter_samples(self._dll, self._power, _POWER_COUNTER)
         watts = select_package_watts(
@@ -560,5 +579,7 @@ class EnergyMeterCounter:
             # chip is drawing several watts. Report "no measurement yet" rather
             # than a false zero; the next sample, 200 ms later, is real.
             self._baseline_pending = False
+            self._last_watts = None
             return None
+        self._last_watts = watts
         return watts
